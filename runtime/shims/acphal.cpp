@@ -142,6 +142,9 @@ struct SHAPE_XMA_CONTEXT {
     uint32_t loopStartOffset : 26;
     uint32_t loopEndOffset : 6;
     uint32_t reserved[10];
+    // Padding: MSVC packs the bit-fields above into 52 bytes, but the GDK context is 64 and the title allocates
+    // its own copies at the GDK size, so the array this shim hands back must be padded to match.
+    uint32_t reserved_pad[1];
 };
 static_assert(sizeof(SHAPE_XMA_CONTEXT) == 64, "SHAPE_XMA_CONTEXT is 64 bytes per GDK");
 
@@ -163,6 +166,8 @@ struct SHAPE_PCM_CONTEXT {
     uint32_t format : 2;
     uint32_t reserved7 : 14;
     uint32_t reserved[1];
+    // Padding: MSVC packs the bit-fields above into 28 bytes, the GDK context is 32 (same reasoning as XMA).
+    uint32_t reserved_pad[1];
 };
 static_assert(sizeof(SHAPE_PCM_CONTEXT) == 32, "SHAPE_PCM_CONTEXT is 32 bytes per GDK");
 
