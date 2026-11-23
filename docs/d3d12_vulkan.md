@@ -2250,6 +2250,13 @@ The trace will enumerate them.
   unknown types and node masks above 1 get an all-zero answer, logged. The test compares `DEFAULT`, `UPLOAD` and
   `READBACK` byte for byte with the host runtime's answer when the host adapter has the layer's architecture (RTX
   4090: identical); `d3d12_heap_properties` compares the `L1` heaps with the layer's own adapter.
+  The retail executable calls it (device slot 26) with the buffer for the returned struct in RCX and the device in
+  RDX, node mask in R8 and heap type in R9: three calls right after device creation, node mask 1 and types 1, 2
+  and 3 (measured under `gta6rt --run` with a register probe in the slot's thunk). A PC C++ method has the device
+  in RCX and the buffer in RDX, so the Xbox-ABI proxy takes the console form when RDX holds the proxy
+  (`d3d12_xs_device.cpp`; `xs_proxy_mock_test`, `device_proxy_test`). Slots 25 and 43 return structs too and the
+  proxy still forwards them in the PC form: slot 25 is reported called the same way later in the boot (#6982),
+  with console resource descriptions that need converting first, and no call of slot 43 has been seen.
 - Residency and power (D3D-33) are no-ops that still check their arguments (`d3d12_vulkan_device.cpp`, tested in
   `d3d12_vulkan_device_test`). Vulkan has no residency API: memory from `vkAllocateMemory` stays usable until
   `vkFreeMemory`, and paging under pressure is the kernel driver's job, so every pageable object is always resident.
@@ -4192,8 +4199,9 @@ on a PC device behind the Xbox-ABI proxy). Measured:
 
 - `amd_fidelityfx_loader_xbox.dll`, `Bink2Scarlett.dll`, `libHttpClient.GDK.dll`, `XCurl.dll`: no `d3d12_xs`
   imports.
-- The package layout XML, chunk 1001, lists `game_scarlett_master.exe`; the file is absent from the folder. No
-  claim in this document depends on the executable's contents.
+- The package layout XML, chunk 1001, lists `game_scarlett_master.exe`; the file is absent from the folder. One
+  claim in this document comes from running the executable from a player's own copy: how it calls device slot 26
+  (section 4.1; register roles and argument values only). No other claim depends on the executable's contents.
 - The repository's existing import survey (`docs/design.md`, "Baseline already recorded") records that the 16
   bundled DLLs need only `xmem` and the two `d3d12_xs` root-signature calls; our scan of the six non-CRT DLLs is
   consistent.

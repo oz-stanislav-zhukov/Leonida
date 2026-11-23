@@ -7,6 +7,7 @@
 //   - OpenSharedHandle of a fence (as ID3D12Fence, IUnknown, Fence1), of a non-fence object, of an invalid handle,
 //     and with a null output or IID, with the references of every object it touches;
 //   - allocation failures in the proxy (operator new, the arrays it unwraps), injected in this executable only;
+//   - device slot 26 called the console's way (the struct's buffer in RCX, the device in RDX) and the PC way;
 //   - --fail-virtualalloc / --fail-virtualprotect / --fail-veh: the guard region's setup failing, injected by
 //     patching this executable's own import table before the first proxy table is built (one process each).
 // Every device, queue, fence and resource here is a mock that records the calls it gets. No game data, no Xbox DLLs.
@@ -75,6 +76,7 @@ enum class Kind { device, queue, fence, resource, allocator, command_list, heap 
 constexpr unsigned kMockSlots = 128;
 constexpr std::uint64_t kFenceHandle = 0x1000, kResourceHandle = 0x2000;  // the handles the mock device opens
 constexpr std::uint64_t kCompletedValue = 7;                            // what a mock fence's slot 8 returns
+constexpr UINT kHeapMarker = 0x26262626;  // the VisibleNodeMask a mock device's slot 26 answers
 // {5d1e0c4a-2b7f-4e61-9a3d-8c4b2f1e6a70}: an interface the mock queue implements that the proxy does not model.
 constexpr GUID kExtraIid{0x5d1e0c4a, 0x2b7f, 0x4e61, {0x9a, 0x3d, 0x8c, 0x4b, 0x2f, 0x1e, 0x6a, 0x70}};
 
@@ -213,6 +215,15 @@ std::uint64_t mock_call(Mock* m, unsigned slot, const std::uint64_t* words) {
                 return static_cast<std::uint32_t>(E_INVALIDARG);
             case 34: case 35: case 46: copy_array(m, slot, a2, a1); break;  // (count, objects, ...)
             case 45: copy_array(m, slot, a1, a3); break;                    // (fences, values, count, ...)
+            case 26: {  // GetCustomHeapProperties, the PC method: (return buffer, node mask, heap type)
+                auto* out = reinterpret_cast<D3D12_HEAP_PROPERTIES*>(a1);
+                if (!out) break;
+                *out = {};
+                out->Type = static_cast<D3D12_HEAP_TYPE>(static_cast<std::uint32_t>(a3));
+                out->CreationNodeMask = static_cast<UINT>(a2);
+                out->VisibleNodeMask = kHeapMarker;
+                return a1;  // a struct-returning method hands the buffer's address back in RAX
+            }
             case 50: copy_array(m, slot, a3, a2); break;                    // (flags, count, objects, fence, value)
             default: break;
         }
@@ -973,7 +984,51 @@ int run_env_slots(bool valid) {
     return 0;
 }
 
-// ---- 9. The refused tail and the guard region ----
+// ---- 9. Device slot 26, GetCustomHeapProperties, the console's way and the PC's ----
+
+int check_custom_heap_properties() {
+    Mock* mock = nullptr;
+    void* device = make_device(mock, 0, true);
+    EXPECT(device && xs::device_slot_overridden(26));
+    void* const* vtable = *reinterpret_cast<void* const* const*>(device);
+
+    // The retail executable's call: the buffer for the struct in RCX, the device in RDX, node mask and heap type in
+    // R8 and R9 (their upper halves are not the callee's to read). The buffer sits inside a pattern that must stay.
+    struct Padded {
+        std::uint8_t before[16];
+        D3D12_HEAP_PROPERTIES value;
+        std::uint8_t after[64];
+    } padded;
+    std::memset(&padded, 0xA5, sizeof(padded));
+    using ConsoleFn = std::uint64_t(WINAPI*)(void*, void*, std::uint64_t, std::uint64_t);
+    const std::uint64_t returned = reinterpret_cast<ConsoleFn>(vtable[26])(
+        &padded.value, device, 0xdeadbeef00000001ull, 0xdeadbeef00000002ull);
+    EXPECT(returned == word(&padded.value));
+    // The PC method got (buffer, node mask, heap type) once, on the device behind the proxy.
+    EXPECT(mock->calls[26] == 1);
+    EXPECT(static_cast<std::uint32_t>(mock->args[26][1]) == 1 && static_cast<std::uint32_t>(mock->args[26][2]) == 2);
+    EXPECT(padded.value.Type == D3D12_HEAP_TYPE_UPLOAD && padded.value.CreationNodeMask == 1 &&
+           padded.value.VisibleNodeMask == kHeapMarker);
+    for (const std::uint8_t byte : padded.before) EXPECT(byte == 0xA5);
+    for (const std::uint8_t byte : padded.after) EXPECT(byte == 0xA5);
+    // The proxy is what it was: main's forwarder took the buffer for the proxy, and a thunk that took the proxy
+    // for the buffer would write the struct over it.
+    EXPECT(xs::is_device_proxy(device) && word(xs::device_proxy_real_device(device)) == word(mock) &&
+           xs::device_proxy_slot_count(device) == 44 && xs::device_proxy_ref_count(device) == 1);
+
+    // A PC C++ caller: the proxy in RCX and its buffer in RDX. That call is forwarded as it is.
+    D3D12_HEAP_PROPERTIES pc{};
+    EXPECT(raw(device, 26, word(&pc), 1, 3) == word(&pc));
+    EXPECT(mock->calls[26] == 2 && mock->args[26][0] == word(&pc));
+    EXPECT(pc.Type == D3D12_HEAP_TYPE_READBACK && pc.CreationNodeMask == 1 && pc.VisibleNodeMask == kHeapMarker);
+
+    EXPECT(release(device) == 0 && mock->refs == 0);
+    std::printf("%s: device slot 26 with the buffer in RCX and the device in RDX reaches the PC method and writes "
+                "only the struct; the PC form is forwarded unchanged\n", g_label);
+    return 0;
+}
+
+// ---- 10. The refused tail and the guard region ----
 
 int check_tail(bool want_guarded) {
     Mock* mock = nullptr;
@@ -1279,6 +1334,9 @@ int main(int argc, char** argv) {
     if (check_tail(true) || check_levels() || check_slot48() || check_fence1() || check_create_failures() ||
         check_open_shared() || check_alloc_failures() || check_allocators() || check_xbox_slots() ||
         check_console_command_list())
+
+    if (check_tail(true) || check_levels() || check_fence1() || check_create_failures() || check_open_shared() ||
+        check_alloc_failures() || check_allocators() || check_xbox_slots() || check_custom_heap_properties())
         return 1;
     std::printf("xs_proxy_mock_test: PASS (%d allocations refused on purpose)\n", g_failed_news);
     return 0;

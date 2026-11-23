@@ -1,6 +1,12 @@
 // Xbox-ABI proxy around a PC ID3D12Device.
 //
 // Measured Xbox device deviations used here (vtable indices, x64):
+//   slot 26   GetCustomHeapProperties, the PC slot, but the retail executable calls it with the buffer for the
+//             returned struct in RCX and the device in RDX (node mask in R8, heap type in R9). A PC C++ method has
+//             the device in RCX and the buffer in RDX. The thunk takes the console form when RDX holds a device
+//             proxy, and forwards the PC form otherwise. Slots 25 and 43 return structs too and are still
+//             forwarded in the PC form: 25 is reported called the same way later in the boot (#6982), with console
+//             resource descriptions the PC method cannot take as they are, and no call of 43 has been seen.
 //   slot 62   CreateComputePipelineState(desc, w2, w3, iid, out): two words (0 from XboxBvhBuilder, meaning unknown)
 //             before the IID. The PC slot 62 is CreateStateObject.
 //   slot 67   CreateComputePipelineState from native code (desc, iid, out): converts the Xbox native-code desc
@@ -110,10 +116,10 @@ using PlacedAtVaPagesHook = bool (*)(const void* va, std::size_t bytes);
 void set_placed_at_va_pages_hook(PlacedAtVaPagesHook hook);
 
 // True for slots the proxy handles itself rather than forwarding verbatim: IUnknown (0-2), 8 and 75 (queue
-// proxies), 9 (allocator proxies), 14, 31/34/35/45/46/50 (proxies unwrapped), 32 and 36 (fence proxies), 48/73 and
-// 78/79/80 (the Xbox slots above, at their configured indices), 62, 67 and 76. Slot 10 is intentionally false: the
-// measured 9/10 handle conversion is on the heap proxy, and device slot 9 is CreateCommandAllocator, which the proxy
-// handles for the allocator proxy.
+// proxies), 9 (allocator proxies), 14, 26 (the console's struct-return form), 31/34/35/45/46/50 (proxies unwrapped),
+// 32 and 36 (fence proxies), 48/73 and 78/79/80 (the Xbox slots above, at their configured indices), 62, 67 and 76.
+// Slot 10 is intentionally false: the measured 9/10 handle conversion is on the heap proxy, and device slot 9 is
+// CreateCommandAllocator, which the proxy handles for the allocator proxy.
 bool device_slot_overridden(unsigned slot);
 
 // Queue and fence proxies created by device slots 8/75 and 36. The real_* accessors return the wrapped object
