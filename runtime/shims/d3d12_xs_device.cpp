@@ -233,7 +233,6 @@ const char* slot_name(unsigned slot) {
         case 22: return "CreateSampler (CPU handle translated)";
         case 23: return "CopyDescriptors (CPU handles translated)";
         case 24: return "CopyDescriptorsSimple (CPU handles translated)";
-        case 25: return "GetResourceAllocationInfo";
         case 25: return "GetResourceAllocationInfo (C or PC form)";
         case 26: return "GetCustomHeapProperties (C or PC form)";
         case 27: return "CreateCommittedResource (PC slot 27)";
@@ -2168,6 +2167,7 @@ HRESULT proxy_create_placed_resource_x(DeviceProxy* self, void* va, const D3D12_
         }
     }
     return handler(self->real, va, pc_desc, state, *riid, out);
+}
 
 // Device slot 26, GetCustomHeapProperties, as the retail executable calls it. Measured on 1.0.2.1 under
 // gta6rt --run with a register probe in this slot's thunk: three calls right after device creation, each with the
@@ -2182,7 +2182,7 @@ D3D12_HEAP_PROPERTIES* proxy_get_custom_heap_properties(D3D12_HEAP_PROPERTIES* o
     note_slot(26);
     *out = self->real->GetCustomHeapProperties(node_mask, heap_type);
     return out;
-
+}
 
 // The Xbox routes at their configured indices. Returns false when `slot` is none of them. Slot 70 asks too, because an
 // override that moves a route onto 70 must win over the built-in 70 handler.
@@ -2211,6 +2211,7 @@ bool route_xbox_device_slot(DeviceProxy* self, unsigned slot, std::uint64_t a1, 
         return false;
     }
     return true;
+}
 
 // Xbox device slot 127 (RT-5 stop 15, measured by Pipodi in #6982): the argument list of ID3D12Device10::
 // CreateCommittedResource3, (heap properties, heap flags, desc1, initial layout, clear value, protected session,
