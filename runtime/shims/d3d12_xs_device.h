@@ -21,6 +21,10 @@
 //             CreateShaderResourceView with that resource). Any other shape, or an unknown VA, gets the PC null view
 //             (CreateShaderResourceView with no resource) and the call returns.
 //   slot 76   resource creation -> PC CreateCommittedResource (PC slot 27), with the Xbox layout word ignored.
+
+//   slot 26   GetCustomHeapProperties, called by the retail title with the C ABI: return buffer in RCX, the device
+//             in RDX (the PC form is `this` in RCX, return buffer in RDX). Slot 25 (GetResourceAllocationInfo, also a
+//             struct wider than 8 bytes) takes the same form by the same rule. Both accept either form.
 //   slot 48   CreateCommandQueueX(desc, riid, out) -> the same queue proxy as slot 8. The 32-byte Xbox desc starts with
 //             a D3D12_COMMAND_QUEUE_DESC; only that prefix is passed on, with the console-only flag bits cleared
 //             (DISABLE_GPU_TIMEOUT is kept). The four extra words are logged once.

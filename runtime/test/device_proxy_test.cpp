@@ -3,7 +3,7 @@
 // It creates the proxy through the registered d3d12_xs!D3D12XboxCreateDevice shim, then calls the measured Xbox
 // slots exactly as the guest would (raw function pointers, not the C++ interface):
 //   slot 14  CreateDescriptorHeap (returns a heap proxy)
-//   slot 26  GetCustomHeapProperties with the struct's buffer in RCX and the device in RDX
+//   slot 25/26 GetResourceAllocationInfo/GetCustomHeapProperties in the title's C form (return buffer first)
 //   heap 9/10 GetCPU/GetGPUDescriptorHandleForHeapStart (Xbox: 8-byte handle in RAX; the PC heap uses the
 //             hidden return pointer in RDX, so slot 14 wraps it)
 //   slot 62  CreateComputePipelineState
@@ -23,6 +23,7 @@
 #include <wrl/client.h>
 
 #include "d3d12_trace.h"
+#include "d3d12_xs_desc_clean.h"
 #include "d3d12_xs_device.h"
 #include "shims.h"
 
@@ -200,6 +201,59 @@ int main(int argc, char** argv) {
     const LUID real_luid = real ? real->GetAdapterLuid() : LUID{};
     check(proxy_luid.LowPart == real_luid.LowPart && proxy_luid.HighPart == real_luid.HighPart,
           "slot 43 forwards GetAdapterLuid (struct return)");
+    // Slot 25 returns a struct wider than 8 bytes. The console title calls it with the C ABI: the hidden
+    // return pointer first (RCX), then the device (RDX), then the arguments, and the buffer comes back in RAX
+    // (measured for slot 26 on the retail executable). Call slot 25 that way through a raw function pointer and compare
+    // with the PC device's own answer.
+    check(rt::d3d12_xs::device_slot_overridden(25), "device slot 25 is the C-ABI GetResourceAllocationInfo override");
+    if (real) {
+        using AllocInfoFn = D3D12_RESOURCE_ALLOCATION_INFO*(WINAPI*)(D3D12_RESOURCE_ALLOCATION_INFO*, void*, UINT, UINT,
+                                                                     const D3D12_RESOURCE_DESC*);
+        auto get_alloc_info = reinterpret_cast<AllocInfoFn>(proxy_vtbl[25]);
+        const D3D12_RESOURCE_DESC desc = buffer_desc();
+        D3D12_RESOURCE_ALLOCATION_INFO got{~0ull, ~0ull};
+        D3D12_RESOURCE_ALLOCATION_INFO* returned = get_alloc_info(&got, device.Get(), 0, 1, &desc);
+        // The proxy cleans the console layout word and flag bits before the PC call (stop 16), so the expected answer is
+        // the PC device's for the cleaned description (the raw 0x101 layout makes WARP answer UINT64_MAX).
+        const D3D12_RESOURCE_DESC clean = rt::d3d12_xs::pc_resource_desc(desc);
+        const D3D12_RESOURCE_ALLOCATION_INFO want = real->GetResourceAllocationInfo(0, 1, &clean);
+        check(want.SizeInBytes != UINT64_MAX, "WARP accepts the normalized slot-25 buffer description");
+        check(returned == &got, "slot 25 returns the caller's buffer in RAX");
+        check(got.SizeInBytes == want.SizeInBytes && got.Alignment == want.Alignment,
+              "slot 25 (C ABI) writes the PC device's GetResourceAllocationInfo into the caller's buffer");
+
+        // The runtime's own code calls the proxy through d3d12.h (PC form: this, then the return buffer). Slot 25
+        // still answers that form.
+        const D3D12_RESOURCE_ALLOCATION_INFO pc_info = device->GetResourceAllocationInfo(0, 1, &desc);
+        check(pc_info.SizeInBytes == want.SizeInBytes && pc_info.Alignment == want.Alignment,
+              "slot 25 still answers the PC (C++) form");
+    }
+
+    constexpr auto kUav = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    constexpr auto kDepthStencil = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    constexpr auto kRenderTarget = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    const struct {
+        DXGI_FORMAT format;
+        D3D12_RESOURCE_FLAGS input;
+        D3D12_RESOURCE_FLAGS expected;
+        const char* message;
+    } flag_cases[] = {
+        {DXGI_FORMAT_B5G5R5A1_UNORM, kRenderTarget | kUav, kRenderTarget, "B5G5R5A1 keeps only RT"},
+        {DXGI_FORMAT_R32G8X24_TYPELESS, kDepthStencil | kUav, kDepthStencil, "R32G8X24 depth keeps only DS"},
+        {DXGI_FORMAT_R8G8B8A8_UNORM, kRenderTarget | kUav, kRenderTarget | kUav, "RGBA8 keeps RT and UAV"},
+        {DXGI_FORMAT_R32_FLOAT, kUav, kUav, "R32_FLOAT keeps UAV"},
+        {DXGI_FORMAT_R32_TYPELESS, kUav, kUav, "R32_TYPELESS without DS keeps UAV"},
+        {DXGI_FORMAT_D16_UNORM, kDepthStencil | kUav, kDepthStencil, "D16 depth keeps only DS"},
+    };
+    for (const auto& test : flag_cases) {
+        D3D12_RESOURCE_DESC desc{};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        desc.Format = test.format;
+        desc.Flags = test.input;
+        const auto clean = rt::d3d12_xs::pc_resource_desc(desc);
+        check(clean.Flags == test.expected && clean.Format == test.format && desc.Flags == test.input, test.message);
+    }
+
     D3D12_RESOURCE_DESC reserved_desc = buffer_desc();
     reserved_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     ComPtr<ID3D12Resource> reserved;
