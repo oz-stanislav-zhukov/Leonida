@@ -117,6 +117,9 @@ if(WIN32 AND LEONIDA_BUILD_WINDOWS_RUNTIME)
     shims/xmem.cpp
     shims/xg_xs.cpp
     shims/acphal.cpp
+
+
+    shims/xapu_chad.cpp
     shims/d3d12_xs.cpp
     shims/d3d12_xs_device.cpp
     shims/xgameruntime.cpp
@@ -129,7 +132,7 @@ if(WIN32 AND LEONIDA_BUILD_WINDOWS_RUNTIME)
     shims/com_shim.cpp
     shims/bcrypt_rng.cpp
 
-    shims/dstorage.cpp)
+    shims/dstorage.cpp
   )
   # dstorage.cpp's guarded_move turns an access violation in a title's buffer into E_DSTORAGE_ACCESS_VIOLATION with
   # __try. MSVC always catches it; clang-cl only with asynchronous exceptions (as for tiny_dll below). A source file
@@ -248,6 +251,8 @@ if(WIN32 AND LEONIDA_BUILD_WINDOWS_RUNTIME)
   target_link_options(xg_xs_test PRIVATE /OPT:NOREF)
 
   # acphal shim ABI test: resolves the registered acphal.dll exports through the registry.
+
+  # AcpHal.dll shim test: like xmem_test it compiles its own registry.cpp.
   add_executable(acphal_test
     test/acphal_test.cpp
     shims/acphal.cpp
@@ -257,6 +262,17 @@ if(WIN32 AND LEONIDA_BUILD_WINDOWS_RUNTIME)
   target_compile_definitions(acphal_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
   target_compile_options(acphal_test PRIVATE /W4 /permissive- /utf-8)
   target_link_options(acphal_test PRIVATE /OPT:NOREF)
+
+  # xapu.dll and chad.dll, the APU and audio DSP command queues, resolved through the registry like xmem_test.
+  add_executable(xapu_chad_test
+    test/xapu_chad_test.cpp
+    shims/xapu_chad.cpp
+    shims/registry.cpp
+  )
+  target_include_directories(xapu_chad_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shims)
+  target_compile_definitions(xapu_chad_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_compile_options(xapu_chad_test PRIVATE /W4 /permissive- /utf-8)
+  target_link_options(xapu_chad_test PRIVATE /OPT:NOREF)
 
   # The process shim's command line: GetCommandLineW must parse (CommandLineToArgvW) back to its __wargv.
   add_executable(process_cmdline_test
@@ -1154,6 +1170,9 @@ if(BUILD_TESTING)
   endif()
   if(WIN32 AND TARGET acphal_test)
     add_test(NAME acphal COMMAND acphal_test)
+  endif()
+  if(WIN32 AND TARGET xapu_chad_test)
+    add_test(NAME xapu_chad COMMAND xapu_chad_test)
   endif()
   if(WIN32 AND TARGET process_cmdline_test)
     add_test(NAME process_cmdline COMMAND process_cmdline_test)
