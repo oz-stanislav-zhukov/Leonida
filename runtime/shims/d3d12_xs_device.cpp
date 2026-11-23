@@ -30,6 +30,7 @@
 // behind the device before a presenter exists, so WaitFrameEventX returns at once with a fresh non-zero token.
 #include "d3d12_xs_device.h"
 #include "d3d12_trace.h"
+#include "d3d12_com.h"  // rt::d3d12::create_console_descriptor_heap for the console-extended slot 14
 #include "d3d12_xs_alloc_size.h"
 #include "d3d12_xs_desc_clean.h"
 #include "../src/shader_library.h"  // leonida::fspx_payload_from_parts for slot 67
@@ -2734,6 +2735,10 @@ bool device_slot_overridden(unsigned slot) {
         slot == 31 || slot == 32 || slot == 34 || slot == 35 || slot == 36 || slot == 45 || slot == 46 ||
         slot == 50 || slot == 56 || slot == 62 || slot == 67 || slot == 70 || slot == 75 || slot == 76 ||
         slot == 133 || slot == kCreateCommittedResource3X)
+        return true;
+    const XboxDeviceSlotRoutes& routes = xbox_device_slot_routes();
+    return slot == routes.frame_interval || slot == routes.schedule_event || slot == routes.wait_event ||
+           slot == routes.queue_x || slot == routes.list_x;
 }
 
 bool is_queue_proxy(const void* queue) { return is_child_proxy<ChildKind::queue>(queue); }
