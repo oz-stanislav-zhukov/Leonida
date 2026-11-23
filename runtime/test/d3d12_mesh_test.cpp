@@ -12,6 +12,8 @@
 //     bottom-left quadrant (yellow). Each pixel is read back and compared.
 //   - A vertex draw with the mesh PSO, and DispatchMesh with the VS one, fail at execution (ReplayResult::
 //     invalid_draw); a mesh grid beyond D3D12's limits fails at Close; an empty grid records nothing.
+//   - A DISPATCH_MESH command signature is created only with the extension; ExecuteIndirect with it records nothing
+//     yet, so its list closes.
 // The shaders are GLSL written to the translator's contract (test/glsl/ms_draw.mesh, ps_draw.frag, vs_fullscreen.vert).
 // No game data. Set LEONIDA_VK_VALIDATION=1 to run under VK_LAYER_KHRONOS_validation.
 #include "vk_test_device.h"
@@ -180,6 +182,11 @@ int main() {
         stream.add(TargetsSubobject{.inner = one_target()});
         Ref<ID3D12PipelineState> pso;
         EXPECT(create(device.p, stream, pso) == E_NOTIMPL && !pso.p);
+        // A DISPATCH_MESH command signature is refused the same way.
+        const D3D12_INDIRECT_ARGUMENT_DESC mesh_arg{D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH};
+        const D3D12_COMMAND_SIGNATURE_DESC mesh_sig{12, 1, &mesh_arg, 0};
+        Ref<ID3D12CommandSignature> sig;
+        EXPECT(device->CreateCommandSignature(&mesh_sig, nullptr, IID_PPV_ARGS(&sig.p)) == E_NOTIMPL && !sig.p);
         root.reset();
         EXPECT(rt::d3d12_xs::device_proxy_ref_count(device.p) == 1);
     }
@@ -398,6 +405,21 @@ int main() {
         list->RSSetViewports(1, &viewport);
         list6->DispatchMesh(4096, 1025, 1);
         EXPECT(list->Close() == E_INVALIDARG);
+        // A DISPATCH_MESH command signature (D3D12_DISPATCH_MESH_ARGUMENTS, 12 bytes) is created; a stride below its
+        // 12 bytes is refused as the PC runtime refuses it. ExecuteIndirect with it records nothing yet (#3777 replays
+        // it), so the list still closes.
+        {
+            const D3D12_INDIRECT_ARGUMENT_DESC mesh_arg{D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH};
+            const D3D12_COMMAND_SIGNATURE_DESC mesh_sig{12, 1, &mesh_arg, 0};
+            const D3D12_COMMAND_SIGNATURE_DESC short_sig{8, 1, &mesh_arg, 0};
+            Ref<ID3D12CommandSignature> sig, short_one;
+            EXPECT(SUCCEEDED(device->CreateCommandSignature(&mesh_sig, nullptr, IID_PPV_ARGS(&sig.p))) && sig.p);
+            EXPECT(device->CreateCommandSignature(&short_sig, nullptr, IID_PPV_ARGS(&short_one.p)) == E_INVALIDARG);
+            EXPECT(SUCCEEDED(list->Reset(allocator.p, mesh_pso.p)));
+            list->SetGraphicsRootSignature(root.p);
+            list->ExecuteIndirect(sig.p, 1, upload.p, 0, nullptr, 0);
+            EXPECT(list->Close() == S_OK);
+        }
         EXPECT(SUCCEEDED(queue->Signal(fence.p, 2)) && SUCCEEDED(fence->SetEventOnCompletion(2, nullptr)));
 
         // D3D-291: pipeline statistics around mesh draws. Query 0 holds a vertex draw, two mesh draws and another

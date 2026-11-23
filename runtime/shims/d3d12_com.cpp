@@ -834,6 +834,15 @@ public:
         } else if (count_buffer_offset != 0) {
             return check(false);
         }
+        if (kind == leonida::IndirectKind::dispatch_mesh) {
+            // Not replayed yet (#3777 replays it as vkCmdDrawMeshTasksIndirectEXT): nothing is recorded, and the
+            // first such call says so. The list stays valid.
+            static std::atomic<bool> logged{false};
+            if (!logged.exchange(true, std::memory_order_relaxed))
+                std::fprintf(stderr, "[rt] d3d12: ExecuteIndirect with a DISPATCH_MESH signature is not replayed yet; "
+                                     "nothing was recorded\n");
+            return;
+        }
         // The record size is checked for every call: D3D12 rejects a signature whose stride cannot hold a record
         // even when no command runs. The argument span is what the signature can walk, max_command_count * stride:
         // the host refuses a range that ends past the buffer (`240` with stride `20` in a `256`-byte buffer), and

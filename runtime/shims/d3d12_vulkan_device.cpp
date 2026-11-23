@@ -5830,6 +5830,11 @@ public:
         case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW: kind = leonida::IndirectKind::draw; break;
         case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED: kind = leonida::IndirectKind::draw_indexed; break;
         case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH: kind = leonida::IndirectKind::dispatch; break;
+        case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH:
+            // As DispatchMesh: only a device with mesh shaders (MeshShaderTier 1) takes it.
+            if (!state_.info.mesh_shader) return E_NOTIMPL;
+            kind = leonida::IndirectKind::dispatch_mesh;
+            break;
         default: return E_NOTIMPL;
         }
         return create_command_signature(kind, desc->ByteStride, riid, out, identity());
