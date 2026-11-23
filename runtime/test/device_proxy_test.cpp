@@ -352,11 +352,12 @@ int main(int argc, char** argv) {
                   rt::d3d12_xs::device_slot_hits(80) == 3,
               "slots 78/79/80 hit counters are 1/1/3");
 
-        D3D12_COMMAND_QUEUE_DESC xbox_queue{};
-        xbox_queue.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+        // The console description is 32 bytes: the PC prefix, then four Xbox words (the proxy logs them).
+        struct { D3D12_COMMAND_QUEUE_DESC pc; std::uint32_t extra[4]; } xbox_queue{};
+        xbox_queue.pc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
         const IID iid_queue = __uuidof(ID3D12CommandQueue);
         ComPtr<ID3D12CommandQueue> xbox_queue_proxy;
-        hr = reinterpret_cast<CreateQueueXFn>(proxy_vtbl[48])(device.Get(), &xbox_queue, &iid_queue,
+        hr = reinterpret_cast<CreateQueueXFn>(proxy_vtbl[48])(device.Get(), reinterpret_cast<const D3D12_COMMAND_QUEUE_DESC*>(&xbox_queue), &iid_queue,
                                                                reinterpret_cast<void**>(xbox_queue_proxy.GetAddressOf()));
         check(hr == S_OK && rt::d3d12_xs::is_queue_proxy(xbox_queue_proxy.Get()),
               "slot 48 CreateCommandQueueX returns a queue proxy");
