@@ -79,6 +79,10 @@ constexpr unsigned kMockSlots = 128;
 constexpr std::uint64_t kFenceHandle = 0x1000, kResourceHandle = 0x2000;  // the handles the mock device opens
 constexpr std::uint64_t kCompletedValue = 7;                            // what a mock fence's slot 8 returns
 constexpr UINT kHeapMarker = 0x26262626;  // the VisibleNodeMask a mock device's slot 26 answers
+
+constexpr SIZE_T kMockHeapCpuStart = 0x55550000ull;
+constexpr UINT64 kMockHeapGpuStart = 0x66660000ull;
+constexpr UINT kMockDescriptorInc = 32;
 // {5d1e0c4a-2b7f-4e61-9a3d-8c4b2f1e6a70}: an interface the mock queue implements that the proxy does not model.
 constexpr GUID kExtraIid{0x5d1e0c4a, 0x2b7f, 0x4e61, {0x9a, 0x3d, 0x8c, 0x4b, 0x2f, 0x1e, 0x6a, 0x70}};
 
@@ -169,6 +173,7 @@ bool mock_has(const Mock* m, REFIID iid) {
         case Kind::allocator:
             return IsEqualIID(iid, __uuidof(ID3D12CommandAllocator)) ||
                    (m->allocator_tag && IsEqualIID(iid, xs::kLeonidaCommandAllocatorTag));
+        case Kind::heap: return IsEqualIID(iid, __uuidof(ID3D12DescriptorHeap));
         default: return false;
     }
 }
@@ -267,7 +272,13 @@ std::uint64_t mock_call(Mock* m, unsigned slot, const std::uint64_t* words) {
                 if (a1) std::memcpy(&m->queue_desc, reinterpret_cast<const void*>(a1), sizeof(m->queue_desc));
                 return static_cast<std::uint32_t>(mock_create(m, Kind::queue, a2, a3));
             case 9: return static_cast<std::uint32_t>(mock_create(m, Kind::allocator, a2, a3));  // CreateCmdAllocator
-            case 14: return static_cast<std::uint32_t>(mock_create(m, Kind::heap, a2, a3));       // CreateDescriptorHeap
+
+            case 14: return static_cast<std::uint32_t>(mock_create(m, Kind::heap, a2, a3));      // CreateDescriptorHeap
+            case 15: return kMockDescriptorInc;                                                  // GetDescriptorHandleIncrementSize
+            case 23:                                                                             // CopyDescriptors
+                copy_array(m, 23, a2, a1);                                                       // dest starts
+                copy_array(m, 24, words[4], a4);                                                 // src starts (recorded in slot 24's array)
+                break;
             case 75: return static_cast<std::uint32_t>(mock_create(m, Kind::queue, a3, a4));   // CreateCommandQueue1
             case 36: return static_cast<std::uint32_t>(mock_create(m, Kind::fence, a3, a4));   // CreateFence
             case 32:                                                                          // OpenSharedHandle
@@ -296,6 +307,15 @@ std::uint64_t mock_call(Mock* m, unsigned slot, const std::uint64_t* words) {
     if (m->kind == Kind::fence && slot == 8) return kCompletedValue;  // GetCompletedValue
     if (m->kind == Kind::queue && slot == 10) copy_array(m, slot, a2, a1);  // ExecuteCommandLists(count, lists)
     if (m->kind == Kind::command_list && slot == 28) copy_array(m, slot, a2, a1);  // SetDescriptorHeaps(count, heaps)
+
+    if (m->kind == Kind::heap && slot == 9) {
+        if (a1) reinterpret_cast<D3D12_CPU_DESCRIPTOR_HANDLE*>(a1)->ptr = kMockHeapCpuStart;
+        return kMockHeapCpuStart;
+    }
+    if (m->kind == Kind::heap && slot == 10) {
+        if (a1) reinterpret_cast<D3D12_GPU_DESCRIPTOR_HANDLE*>(a1)->ptr = kMockHeapGpuStart;
+        return kMockHeapGpuStart;
+    }
     return S_OK;
 }
 
@@ -1609,6 +1629,125 @@ int check_tail(bool want_guarded) {
     return 0;
 }
 
+struct HeapHookState {
+    void* next_ptr = nullptr;
+    std::size_t last_alloc_size = 0;
+    std::uint64_t last_alloc_attr = 0;
+    int alloc_calls = 0;
+    void* last_free_ptr = nullptr;
+    std::uint64_t last_free_attr = 0;
+    int free_calls = 0;
+} g_heap_hook;
+
+void* mock_heap_alloc(std::size_t byte_size, std::uint64_t attributes) {
+    ++g_heap_hook.alloc_calls;
+    g_heap_hook.last_alloc_size = byte_size;
+    g_heap_hook.last_alloc_attr = attributes;
+    return g_heap_hook.next_ptr;
+}
+
+void mock_heap_free(void* ptr, std::uint64_t attributes) {
+    ++g_heap_hook.free_calls;
+    g_heap_hook.last_free_ptr = ptr;
+    g_heap_hook.last_free_attr = attributes;
+}
+
+int check_descriptor_heap_hooks() {
+    g_heap_hook = {};
+    xs::set_descriptor_heap_allocator(&mock_heap_alloc, &mock_heap_free);
+
+    Mock* real = new_mock(Kind::device);
+    real->refs = 1;
+    real->device_level = 9;
+    void* device = nullptr;
+    EXPECT(SUCCEEDED(xs::create_device_proxy(reinterpret_cast<ID3D12Device*>(real), __uuidof(ID3D12Device), &device)));
+
+    constexpr SIZE_T kCustomBase = 0x77770000ull;
+    g_heap_hook.next_ptr = reinterpret_cast<void*>(kCustomBase);
+    D3D12_DESCRIPTOR_HEAP_DESC desc{};
+    desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    desc.NumDescriptors = 8;
+    desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    const IID iid_heap = __uuidof(ID3D12DescriptorHeap);
+    void* heap = nullptr;
+    EXPECT(SUCCEEDED(hr_of(raw(device, 14, word(&desc), word(&iid_heap), word(&heap)))));
+    EXPECT(heap != nullptr && xs::is_heap_proxy(heap));
+    EXPECT(g_heap_hook.alloc_calls == 1);
+    EXPECT(g_heap_hook.last_alloc_size == desc.NumDescriptors * kMockDescriptorInc);
+    EXPECT(g_heap_hook.last_alloc_attr == xs::kXmemDescriptorHeapAttributes);
+
+    // Slot 9 returns the title-supplied base; slot 10 keeps the real GPU start so (gpu - cpu) delta stays exact.
+    EXPECT(raw(heap, 9) == kCustomBase);
+    EXPECT(raw(heap, 10) == kMockHeapGpuStart);
+
+    // Public translator and device slots 17-24 remap handles in [kCustomBase, +256) to kMockHeapCpuStart + offset.
+    const SIZE_T off3 = 3 * kMockDescriptorInc;
+    const SIZE_T off7 = 7 * kMockDescriptorInc;
+    const SIZE_T outside = kCustomBase + desc.NumDescriptors * kMockDescriptorInc;
+    EXPECT(xs::translate_cpu_descriptor_handle(device, D3D12_CPU_DESCRIPTOR_HANDLE{kCustomBase + off3}).ptr ==
+           kMockHeapCpuStart + off3);
+    EXPECT(xs::translate_cpu_descriptor_handle(device, D3D12_CPU_DESCRIPTOR_HANDLE{outside}).ptr == outside);
+
+    raw(device, 17, 0x11, kCustomBase + off3);                                          // CreateConstantBufferView
+    EXPECT(real->args[17][1] == kMockHeapCpuStart + off3);
+    raw(device, 18, 0x22, 0x33, kCustomBase + off3);                                    // CreateShaderResourceView
+    EXPECT(real->args[18][2] == kMockHeapCpuStart + off3);
+    raw(device, 19, 0x22, 0x33, 0x44, kCustomBase + off7);                              // CreateUnorderedAccessView
+    EXPECT(real->args[19][3] == kMockHeapCpuStart + off7);
+    raw(device, 20, 0x22, 0x33, kCustomBase + off3);                                    // CreateRenderTargetView
+    EXPECT(real->args[20][2] == kMockHeapCpuStart + off3);
+    raw(device, 21, 0x22, 0x33, kCustomBase + off7);                                    // CreateDepthStencilView
+    EXPECT(real->args[21][2] == kMockHeapCpuStart + off7);
+    raw(device, 22, 0x55, kCustomBase + off3);                                          // CreateSampler
+    EXPECT(real->args[22][1] == kMockHeapCpuStart + off3);
+    raw(device, 24, 1, kCustomBase + off7, kCustomBase + off3, 0);                      // CopyDescriptorsSimple
+    EXPECT(real->args[24][1] == kMockHeapCpuStart + off7);
+    EXPECT(real->args[24][2] == kMockHeapCpuStart + off3);
+    {
+        D3D12_CPU_DESCRIPTOR_HANDLE dsts[2] = {{kCustomBase + off3}, {outside}};
+        D3D12_CPU_DESCRIPTOR_HANDLE srcs[2] = {{kCustomBase + off7}, {0x99990000ull}};
+        UINT sizes[2] = {1, 1};
+        static_cast<ID3D12Device*>(device)->CopyDescriptors(2, dsts, sizes, 2, srcs, sizes,
+                                                            D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        EXPECT(real->array[23][0] == kMockHeapCpuStart + off3 && real->array[23][1] == outside);
+        EXPECT(real->array[24][0] == kMockHeapCpuStart + off7 && real->array[24][1] == 0x99990000ull);
+    }
+
+    // Releasing the heap unregisters the range and invokes the free callback with the same attribute word.
+    EXPECT(raw(heap, 2) == 0);
+    EXPECT(g_heap_hook.free_calls == 1);
+    EXPECT(g_heap_hook.last_free_ptr == reinterpret_cast<void*>(kCustomBase));
+    EXPECT(g_heap_hook.last_free_attr == xs::kXmemDescriptorHeapAttributes);
+    EXPECT(xs::translate_cpu_descriptor_handle(device, D3D12_CPU_DESCRIPTOR_HANDLE{kCustomBase + off3}).ptr ==
+           kCustomBase + off3);
+
+    // Null return from the hook falls back cleanly to the PC heap's start and never calls free.
+    g_heap_hook.next_ptr = nullptr;
+    void* plain_heap = nullptr;
+    EXPECT(SUCCEEDED(hr_of(raw(device, 14, word(&desc), word(&iid_heap), word(&plain_heap)))));
+    EXPECT(plain_heap != nullptr && raw(plain_heap, 9) == kMockHeapCpuStart);
+    EXPECT(raw(plain_heap, 2) == 0);
+    EXPECT(g_heap_hook.free_calls == 1);
+
+    // QI failure on heap proxy creation (unsupported IID) frees the hook backing immediately.
+    g_heap_hook.next_ptr = reinterpret_cast<void*>(kCustomBase);
+    void* bad_heap = nullptr;
+    EXPECT(hr_of(raw(device, 14, word(&desc), word(&kExtraIid), word(&bad_heap))) == E_NOINTERFACE);
+    EXPECT(bad_heap == nullptr && g_heap_hook.free_calls == 2);
+    EXPECT(g_heap_hook.last_free_ptr == reinterpret_cast<void*>(kCustomBase));
+
+    // OOM on HeapProxy allocation frees the hook backing and leaves no dangling range.
+    g_fail_news = 1;
+    void* oom_heap = nullptr;
+    EXPECT(hr_of(raw(device, 14, word(&desc), word(&iid_heap), word(&oom_heap))) == E_OUTOFMEMORY);
+    EXPECT(oom_heap == nullptr && g_heap_hook.free_calls == 3);
+    EXPECT(xs::translate_cpu_descriptor_handle(device, D3D12_CPU_DESCRIPTOR_HANDLE{kCustomBase}).ptr == kCustomBase);
+
+    EXPECT(raw(device, 2) == 0 && real->refs == 0);
+    xs::set_descriptor_heap_allocator(nullptr, nullptr);
+    return 0;
+}
+
 // ---- Guard-region setup failures: this executable's import table, patched before the first proxy table ----
 
 std::atomic<int> g_injected{0};
@@ -2049,7 +2188,7 @@ int main(int argc, char** argv) {
         check_alloc_failures() || check_allocators() || check_render_target_sizes() ||
         check_allocation_descriptions_cleaned() || check_render_target_layout() || check_xbox_slots() ||
         check_custom_heap_properties() || check_slot70() || check_slot70_raw_buffer() ||
-        check_committed_resource3_x())
+        check_committed_resource3_x() || check_descriptor_heap_hooks())
         return 1;
     std::printf("xs_proxy_mock_test: PASS (%d allocations refused on purpose)\n", g_failed_news);
     return 0;
