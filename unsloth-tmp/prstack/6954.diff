@@ -1,0 +1,234 @@
+diff --git a/docs/d3d12_command_objects.md b/docs/d3d12_command_objects.md
+index 5a214e3258..3cbc5a6f3b 100644
+--- a/docs/d3d12_command_objects.md
++++ b/docs/d3d12_command_objects.md
+@@ -830,7 +830,7 @@ command object.
+ | Item | Why it is blocked |
+ |---|---|
+ | `PresentX` | No slot, signature, plane struct or swapchain/plane parameters. Prior art gives only names, the 2-plane/8-view limits and four flag names. |
+-| `CreateCommandQueueX` | No slot or parameter layout; only the UMD message and an inferred shape. |
++| `CreateCommandQueueX` | No slot or parameter layout; only the UMD message and an inferred shape. The retail title calls device slot 48 as (desc, riid, out) with a 32-byte desc (#6954), which differs from the (pDesc, pShaderQueueParams, riid, out) shape inferred above. |
+ | `SuspendX` / `ResumeX` | No slot or signature. |
+ | Xbox queue/list/fence/allocator slot deviations | No runtime binary and no game executable; the package has no queue, fence or allocator client, and its only command-list client is the BVH builder. |
+ | Builder's list field `+0x350` | Read once (`0x1d877`) and not explained by the inline buffer of section 3.5a, which covers `+0x18`, `+0x28`, `+0x30`, `+0x140`, `+0x141`, `+0x344` and `+0x544`. |
+diff --git a/docs/d3d12_vulkan.md b/docs/d3d12_vulkan.md
+index 33b52d422f..7baa938843 100644
+--- a/docs/d3d12_vulkan.md
++++ b/docs/d3d12_vulkan.md
+@@ -2084,7 +2084,7 @@ The trace will enumerate them.
+ 
+ | D3D12 / Xbox object | Vulkan / layer object | Notes |
+ |---|---|---|
+-| `ID3D12Device` … `ID3D12Device11` | one `Device` object with the public chain plus measured Xbox overrides | The shipped BVH builder names Device11; slots 1/15/18/19/27/38 matched desktop in prior art, slot 62 is called as `CreateComputePipelineState`, slot 76 is Xbox texture creation, and heap slots 9/10 return in RAX. Unknown Xbox IIDs/slots are logged and refused. |
++| `ID3D12Device` … `ID3D12Device11` | one `Device` object with the public chain plus measured Xbox overrides | The shipped BVH builder names Device11; slots 1/15/18/19/27/38 matched desktop in prior art, slot 48 is called as `(desc, riid, out)` with `IID_ID3D12CommandQueue` (PC slot 48 is `OpenExistingHeapFromAddress`; the 32-byte desc is a PC `D3D12_COMMAND_QUEUE_DESC` plus four Xbox words, logged once, and the proxy takes the slot 8 path with the PC prefix and only `DISABLE_GPU_TIMEOUT` kept), slot 62 is called as `CreateComputePipelineState`, slot 76 is Xbox texture creation, and heap slots 9/10 return in RAX. Unknown Xbox IIDs/slots are logged and refused. |
+ | `ID3D12CommandQueue` | one leased `VkQueue` per live queue: direct queues on the graphics family, compute queues on an async-compute family and copy queues on a transfer-only (DMA) family when the GPU has them (`src/queue_families.h`), else graphics-family leases | Distinct Vulkan queues allow cross-queue waits and signals to make progress. With more than one family in use, buffers, images, the arena and staging are created `VK_SHARING_MODE_CONCURRENT` over those families, so no ownership transfers are needed. Barriers on copy and compute queues are narrowed to the stages their family has; render-target and depth clears are refused there (as in D3D12), and the D24/RGB96 copy conversions and bindless flushes stay off a transfer-only queue. Tested by `vk_queue_test`. `PresentX`, `SuspendX`, `ResumeX` are Xbox queue methods, not in the public vtable; public GDKX samples present only through them (§4.5). Call shapes known, slots **Open**. |
+ | `ID3D12CommandAllocator` | IR arena + `VkCommandPool` | Reset only when the previous submission's fence is complete. |
+ | `ID3D12GraphicsCommandList` … `8` | `CommandList` with IR | Replay at `ExecuteCommandLists`; bundles inlined. Supports render passes, mesh dispatch, enhanced barriers; records the GCL8 front/back stencil references (applied only once a pipeline path consumes them). `Draw` views are inlined and moved into the command stream (D3D-289), eliminating per-draw heap allocations. |
+diff --git a/docs/retail_boot_chain.md b/docs/retail_boot_chain.md
+index f46c698b95..8f338bde2d 100644
+--- a/docs/retail_boot_chain.md
++++ b/docs/retail_boot_chain.md
+@@ -21,7 +21,7 @@ stand-ins named below (not pull requests yet). Own 1.0.2.1 copy, Windows 11, RTX
+ | 5 | Fatal assert when `DStorageGetFactory` returns null | #4348 |
+ | 6 | `XMemAllocatePhysicalPages` unimplemented; the title asserts on FALSE | Local stand-in, §2 |
+ | 7 | `D3D12XboxCreateDevice` succeeds; device slot 26 is called with its arguments swapped | Local, §3.1 |
+-| 8 | Device slot 48 is forwarded to the PC slot 48 and fails | Local, §3.2 |
++| 8 | Device slot 48 is forwarded to the PC slot 48 and fails | #6954 |
+ | 9 | Device slot 73 is forwarded to the PC slot 73; the title then reads through a null list | #2490's list proxy plus local routing, §3.3 |
+ | 10 | An `XMemVirtualAlloc` reserve of about 185 MiB with type `0x42000`, attribute 7 and `PAGE_NOACCESS` is refused with `ERROR_INVALID_PARAMETER`. `0x40000` is `MEM_RESERVE_PLACEHOLDER` on the PC, which `VirtualAlloc` refuses and only `VirtualAlloc2` accepts; stop 11 supports the same reading on the console | Local: reserve it with `VirtualAlloc2(MEM_RESERVE \| MEM_RESERVE_PLACEHOLDER)` |
+ | 11 | The title carves five sub-ranges out of that placeholder with `MEM_RESERVE \| MEM_REPLACE_PLACEHOLDER \| MEM_PHYSICAL \| MEM_LARGE_PAGES` (`0x20406000`) at addresses inside it, then allocates a second batch of physical pages | Local: a physical reserve inside a known placeholder stays a placeholder (the page maps split it); other `MEM_REPLACE_PLACEHOLDER` calls split the range and allocate it in place |
+diff --git a/runtime/shims/d3d12_xs_device.cpp b/runtime/shims/d3d12_xs_device.cpp
+index e17a80353b..6ec8a21a4d 100644
+--- a/runtime/shims/d3d12_xs_device.cpp
++++ b/runtime/shims/d3d12_xs_device.cpp
+@@ -5,7 +5,8 @@
+ // the same index through a 15-argument integer prototype. Every PC D3D12 device method takes integer/pointer
+ // arguments only, so the x64 registers and stack words line up exactly; methods that return a struct keep their
+ // hidden return pointer in RDX, which is passed through as the first argument unchanged. The measured exceptions
+-// are IUnknown (0-2), slot 14 (which wraps the heap), 62 and 76, plus the heap proxy's 9/10 conversion from the
++// are IUnknown (0-2), slot 14 (which wraps the heap), 48 (a queue creation, where the PC has
++// OpenExistingHeapFromAddress), 62 and 76, plus the heap proxy's 9/10 conversion from the
+ // PC hidden-pointer form to the Xbox RAX form. Slots 8/75 (command queues), 36 (fences) and 32 (a shared fence) wrap
+ // what they create in queue and fence proxies built the same way, and slots 31/34/35/45/46/50 hand the real objects
+ // behind heap, queue and fence proxies to the real device (see the command queue and fence section).
+@@ -137,7 +138,7 @@ const char* slot_name(unsigned slot) {
+         case 43: return "GetAdapterLuid";
+         case 45: return "SetEventOnMultipleFenceCompletion (fence proxies unwrapped)";
+         case 46: return "SetResidencyPriority (proxies unwrapped)";
+-        case 48: return "Xbox CreateCommandQueueX -> queue proxy";
++        case 48: return "Xbox CreateCommandQueueX (32-byte desc) -> queue proxy";
+         case 50: return "EnqueueMakeResident (proxies unwrapped)";
+         case 62: return "Xbox CreateComputePipelineState";
+         case 67: return "Xbox DeserializeComputePipelineStateX";
+@@ -1146,6 +1147,25 @@ HRESULT proxy_create_command_queue(DeviceProxy* self, const D3D12_COMMAND_QUEUE_
+     return wrap_child<ChildKind::queue>(static_cast<IUnknown*>(created), self, riid, out);
+ }
+ 
++// Device slot 48, measured on the retail title: (desc, riid, out) with riid = IID_ID3D12CommandQueue. On the PC the
++// slot is OpenExistingHeapFromAddress, so forwarding it by number fails. desc is a PC D3D12_COMMAND_QUEUE_DESC
++// (16 bytes) followed by four more 32-bit Xbox words of unknown meaning, logged once. Only the PC prefix is used and
++// only the flag the PC knows is kept; the rest is the slot 8 path.
++HRESULT proxy_create_command_queue_xbox(DeviceProxy* self, const std::uint32_t* desc, const IID* riid, void** out) {
++    if (out) *out = nullptr;
++    if (!desc) return E_INVALIDARG;
++    static_assert(sizeof(D3D12_COMMAND_QUEUE_DESC) == 16, "the PC prefix of the Xbox description is 16 bytes");
++    D3D12_COMMAND_QUEUE_DESC pc{};
++    std::memcpy(&pc, desc, sizeof(pc));
++    pc.Flags &= D3D12_COMMAND_QUEUE_FLAG_DISABLE_GPU_TIMEOUT;
++    static std::atomic<bool> logged{false};
++    if (!logged.exchange(true, std::memory_order_relaxed))
++        std::fprintf(stderr,
++                     "[rt] d3d12_xs: slot 48 queue: flags=0x%x extra words=0x%x 0x%x 0x%x 0x%x\n",
++                     static_cast<unsigned>(desc[2]), desc[4], desc[5], desc[6], desc[7]);
++    return proxy_create_command_queue(self, &pc, riid, out);
++}
++
+ // Xbox device slot 78 (public HLE): SetFrameIntervalX(output, interval_us, latency, flags). The output and flags are
+ // not used before a presenter exists. The period is a vblank period in microseconds in the public samples (16667 for
+ // 60 Hz), and latency is the allowed frames in flight. S_OK even for 0: a boot must not abort here, and nothing paces.
+@@ -1549,9 +1569,9 @@ std::uint64_t WINAPI proxy_slot(DeviceProxy* self, std::uint64_t a1, std::uint64
+         }
+         if (Slot == routes.queue_x) {
+             log_xbox_route_once(Slot, "CreateCommandQueueX", a1, a2, a3, a4, a5);
+-            return hr_to_u64(proxy_create_command_queue(self, reinterpret_cast<const D3D12_COMMAND_QUEUE_DESC*>(a1),
+-                                                        reinterpret_cast<const IID*>(a2),
+-                                                        reinterpret_cast<void**>(a3)));
++            return hr_to_u64(proxy_create_command_queue_xbox(self, reinterpret_cast<const std::uint32_t*>(a1),
++                                                             reinterpret_cast<const IID*>(a2),
++                                                             reinterpret_cast<void**>(a3)));
+         }
+         if (Slot == routes.list_x) {
+             log_xbox_route_once(Slot, "CreateCommandListX", a1, a2, a3, a4, a5);
+diff --git a/runtime/shims/d3d12_xs_device.h b/runtime/shims/d3d12_xs_device.h
+index 0019ec5069..9666c8c603 100644
+--- a/runtime/shims/d3d12_xs_device.h
++++ b/runtime/shims/d3d12_xs_device.h
+@@ -7,8 +7,9 @@
+ //             (+0x00 root signature, +0x28 code, +0x30 size) to D3D12_COMPUTE_PIPELINE_STATE_DESC and forwards
+ //             to PC CreateComputePipelineState (slot 11). The PC slot 67 is CreateProtectedResourceSession1.
+ //   slot 76   resource creation -> PC CreateCommittedResource (PC slot 27), with the Xbox layout word ignored.
+-//   slot 48   CreateCommandQueueX(desc, riid, out) -> the same queue proxy as slot 8. The Xbox desc's first fields are
+-//             D3D12_COMMAND_QUEUE_DESC's (public HLE).
++//   slot 48   CreateCommandQueueX(desc, riid, out) -> the same queue proxy as slot 8. The 32-byte Xbox desc starts with
++//             a D3D12_COMMAND_QUEUE_DESC; only that prefix is passed on, with the console-only flag bits cleared
++//             (DISABLE_GPU_TIMEOUT is kept). The four extra words are logged once.
+ //   slot 73   CreateCommandListX(desc, allocator, initialState, riid, out) -> PC CreateCommandList(0, type, allocator,
+ //             initialState, riid, out). The type is the first word of the Xbox desc; there is no node-mask argument
+ //             in the console call (public HLE; the PC six-argument form differs).
+diff --git a/runtime/test/device_proxy_test.cpp b/runtime/test/device_proxy_test.cpp
+index 46a853e7c3..44c5bd516d 100644
+--- a/runtime/test/device_proxy_test.cpp
++++ b/runtime/test/device_proxy_test.cpp
+@@ -352,11 +352,12 @@ int main(int argc, char** argv) {
+                   rt::d3d12_xs::device_slot_hits(80) == 3,
+               "slots 78/79/80 hit counters are 1/1/3");
+ 
+-        D3D12_COMMAND_QUEUE_DESC xbox_queue{};
+-        xbox_queue.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
++        // The console description is 32 bytes: the PC prefix, then four Xbox words (the proxy logs them).
++        struct { D3D12_COMMAND_QUEUE_DESC pc; std::uint32_t extra[4]; } xbox_queue{};
++        xbox_queue.pc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+         const IID iid_queue = __uuidof(ID3D12CommandQueue);
+         ComPtr<ID3D12CommandQueue> xbox_queue_proxy;
+-        hr = reinterpret_cast<CreateQueueXFn>(proxy_vtbl[48])(device.Get(), &xbox_queue, &iid_queue,
++        hr = reinterpret_cast<CreateQueueXFn>(proxy_vtbl[48])(device.Get(), reinterpret_cast<const D3D12_COMMAND_QUEUE_DESC*>(&xbox_queue), &iid_queue,
+                                                                reinterpret_cast<void**>(xbox_queue_proxy.GetAddressOf()));
+         check(hr == S_OK && rt::d3d12_xs::is_queue_proxy(xbox_queue_proxy.Get()),
+               "slot 48 CreateCommandQueueX returns a queue proxy");
+diff --git a/runtime/test/xs_proxy_mock_test.cpp b/runtime/test/xs_proxy_mock_test.cpp
+index f0030116bd..1d6306134a 100644
+--- a/runtime/test/xs_proxy_mock_test.cpp
++++ b/runtime/test/xs_proxy_mock_test.cpp
+@@ -91,6 +91,7 @@ struct Mock {
+     unsigned calls[kMockSlots];
+     std::uint64_t args[kMockSlots][5];
+     std::uint64_t array[kMockSlots][4];  // device: the first entries of the array argument, as received
++    D3D12_COMMAND_QUEUE_DESC queue_desc;  // device: the description of its last CreateCommandQueue (slot 8)
+ };
+ 
+ Mock g_pool[256];
+@@ -186,7 +187,9 @@ std::uint64_t mock_call(Mock* m, unsigned slot, const std::uint64_t* words) {
+     const std::uint64_t a1 = words[0], a2 = words[1], a3 = words[2], a4 = words[3];
+     if (m->kind == Kind::device) {
+         switch (slot) {
+-            case 8: return static_cast<std::uint32_t>(mock_create(m, Kind::queue, a2, a3));    // CreateCommandQueue
++            case 8:                                                                           // CreateCommandQueue
++                if (a1) std::memcpy(&m->queue_desc, reinterpret_cast<const void*>(a1), sizeof(m->queue_desc));
++                return static_cast<std::uint32_t>(mock_create(m, Kind::queue, a2, a3));
+             case 9: return static_cast<std::uint32_t>(mock_create(m, Kind::allocator, a2, a3));  // CreateCmdAllocator
+             case 75: return static_cast<std::uint32_t>(mock_create(m, Kind::queue, a3, a4));   // CreateCommandQueue1
+             case 36: return static_cast<std::uint32_t>(mock_create(m, Kind::fence, a3, a4));   // CreateFence
+@@ -291,6 +294,8 @@ const IID kUnknownIid = __uuidof(IUnknown);
+ const IID kResourceIid = __uuidof(ID3D12Resource);
+ const IID kDevice1Iid = __uuidof(ID3D12Device1);
+ const D3D12_COMMAND_QUEUE_DESC kQueueDesc{};
++// The retail title's slot 48 desc is 32 bytes (the route logs words 4..7); type in word 0 as in kQueueDesc.
++const std::uint32_t kXboxQueueDesc[8]{};
+ 
+ // A device proxy over a new mock device. The proxy takes the mock's one reference.
+ void* make_device(Mock*& mock, int level, bool fence1, bool allocator_tag = true) {
+@@ -392,6 +397,30 @@ int check_levels() {
+     return 0;
+ }
+ 
++// ---- 1b. Slot 48: the title's CreateCommandQueue with a 32-byte description ----
++
++int check_slot48() {
++    Mock* mock = nullptr;
++    void* device = make_device(mock, 3, true);
++    EXPECT(device);
++    // 16-byte PC prefix, then four Xbox words; the flags carry a bit the PC does not know besides the timeout bit.
++    const std::uint32_t desc[8] = {D3D12_COMMAND_LIST_TYPE_COMPUTE, 100,
++                                   0x8000u | D3D12_COMMAND_QUEUE_FLAG_DISABLE_GPU_TIMEOUT, 1, 0x11, 0x22, 0x33, 0x44};
++    void* queue = reinterpret_cast<void*>(1);
++    EXPECT(hr_of(raw(device, 48, word(desc), word(&kQueueIid), word(&queue))) == S_OK);
++    EXPECT(xs::is_queue_proxy(queue) && mock->calls[8] == 1);
++    EXPECT(mock->queue_desc.Type == D3D12_COMMAND_LIST_TYPE_COMPUTE && mock->queue_desc.Priority == 100 &&
++           mock->queue_desc.Flags == D3D12_COMMAND_QUEUE_FLAG_DISABLE_GPU_TIMEOUT &&
++           mock->queue_desc.NodeMask == 1);
++    EXPECT(release(queue) == 0);
++    void* none = reinterpret_cast<void*>(1);
++    EXPECT(hr_of(raw(device, 48, 0, word(&kQueueIid), word(&none))) == E_INVALIDARG && !none);
++    EXPECT(mock->calls[8] == 1);
++    EXPECT(release(device) == 0);
++    std::printf("%s: slot 48 makes a queue proxy from a 32-byte description, PC prefix and flags only\n", g_label);
++    return 0;
++}
++
+ // ---- 2. Fences with and without ID3D12Fence1 ----
+ 
+ int check_fence1() {
+@@ -714,11 +743,10 @@ int check_xbox_slots() {
+     EXPECT(hr_of(raw(device, 80, 0, 0, 0, 0, 0)) == E_POINTER);
+     EXPECT(mock->calls[80] == 0 && xs::device_slot_hits(80) == 3);
+ 
+-    // 48 CreateCommandQueueX(desc, riid, out): the queue proxy, created through the PC slot 8 path.
++    // 48 CreateCommandQueueX(desc, riid, out): the queue proxy, created through the PC slot 8 path (filtered desc copy).
+     void* queue = nullptr;
+-    EXPECT(hr_of(raw(device, 48, word(&kQueueDesc), word(&kQueueIid), word(&queue))) == S_OK);
++    EXPECT(hr_of(raw(device, 48, word(kXboxQueueDesc), word(&kQueueIid), word(&queue))) == S_OK);
+     EXPECT(xs::is_queue_proxy(queue) && mock->calls[48] == 0 && mock->calls[8] == 1);
+-    EXPECT(mock->args[8][0] == word(&kQueueDesc));
+ 
+     // 73 CreateCommandListX(desc, allocator, initialState, riid, out): the type is desc's first word, the allocator
+     // proxy is unwrapped, the node mask is 0 and the PC six-argument CreateCommandList (slot 12) is reached.
+@@ -792,7 +820,7 @@ int run_env_slots(bool valid) {
+         EXPECT(hr_of(raw(device, 97, 0, 0, 0, 0)) == S_OK && mock->calls[97] == 0);
+         EXPECT(hr_of(raw(device, 98, 0, 0, 0, 0, word(&token))) == S_OK && token && mock->calls[98] == 0);
+         void* queue = nullptr;
+-        EXPECT(hr_of(raw(device, 99, word(&kQueueDesc), word(&kQueueIid), word(&queue))) == S_OK);
++        EXPECT(hr_of(raw(device, 99, word(kXboxQueueDesc), word(&kQueueIid), word(&queue))) == S_OK);
+         EXPECT(xs::is_queue_proxy(queue) && mock->calls[99] == 0);
+         const IID allocator_iid = __uuidof(ID3D12CommandAllocator);
+         void* allocator = nullptr;
+@@ -947,8 +975,8 @@ int main(int argc, char** argv) {
+         return run_fault_mode(argv[1]);
+     }
+     if (argc != 1) return 2;
+-    if (check_tail(true) || check_levels() || check_fence1() || check_create_failures() || check_open_shared() ||
+-        check_alloc_failures() || check_allocators() || check_xbox_slots())
++    if (check_tail(true) || check_levels() || check_slot48() || check_fence1() || check_create_failures() ||
++        check_open_shared() || check_alloc_failures() || check_allocators() || check_xbox_slots())
+         return 1;
+     std::printf("xs_proxy_mock_test: PASS (%d allocations refused on purpose)\n", g_failed_news);
+     return 0;

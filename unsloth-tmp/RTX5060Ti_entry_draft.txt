@@ -1,0 +1,15 @@
+GPU:        NVIDIA GeForce RTX 5060 Ti 16 GB (Blackwell / GB206), subgroup 32..32
+Driver:     NVIDIA GeForce Game Ready 621.24 (32.0.16.2124), Vulkan 1.4 (SDK 1.4.363.1)
+Subgroup:   32..32 (minSubgroupSize 32, maxSubgroupSize 32; default 32)
+OS:         Windows 10 22H2
+Commit:     5d74c2723 (main; includes b7a3fed28 pe_loader /GA TLS index 0 and 6312c057f xgameruntime XErrorReport export)
+Tools:      llvm-mc 21.1.8 (native, AMDGPU target, built from source), SPIRV-Tools v2026.4 (Vulkan SDK 1.4.363.1), MSVC 19.44.35223 (VS 2022 Community) + CMake/Ninja, Python 3.13
+build.py:   270 shaders: 270 translated, 270 pass spirv-val (6 mesh fixtures not built: ms_clip, ms_f16_pack, ms_tri, ms_v5_workgroup, ms_w64x_ballot, ms_wave_info_s3)
+check.py:   native 176 of 211 pass, 35 skipped; emulated (LEONIDA_W64_EMULATE=1) 207 of 211 pass, 4 skipped
+run_gpu_tests.py: native 192/241 passed, 48 skipped, 1 failed; emulated (LEONIDA_W64_EMULATE=1) 223/241 passed, 17 skipped, 1 failed
+Failed:     ms_wave_info_s3: at (0,0) got (-1,-1,-1,-1), want (0.0078,0.0078,0.5,1.0); stable failure on both native and emulated. Same signature as #6172 (known mesh wave-info regression, fixes #5741/#5855 still open).
+Skipped:    native 48 = 31 "no 64-wide compute subgroup on this device" + 1 "cannot require a 64-wide fragment subgroup" + 16 documented "run by d3d12_*_test / w64_graphics.py"; emulated 17 = 1 + 16 same.
+Notes:
+- Built with scripts/build_runtime.ps1 -FetchSdl3 (GameInput/SDL3 shim enabled), RelWithDebInfo.
+- Every pixel test except ms_wave_info_s3 passed exactly (4096/4096).
+- AI-assisted (Qwen): built main at 5d74c2723, ran build.py, check.py and run_gpu_tests.py (native + emulated) on this GPU, verified the isolated reruns of the one failure.

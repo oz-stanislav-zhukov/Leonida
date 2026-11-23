@@ -1,0 +1,1202 @@
+diff --git a/docs/d3d12_vulkan.md b/docs/d3d12_vulkan.md
+index 019f66fa28..b70aa2dd27 100644
+--- a/docs/d3d12_vulkan.md
++++ b/docs/d3d12_vulkan.md
+@@ -2217,6 +2217,23 @@ The trace will enumerate them.
+   Intel Raptor Lake-S (101.7092) and RTX 5060 Laptop (621.24) hosts wrap, two 2^63 buffers to 0, and WARP on that
+   PC still saturates. A wrapped total could make a caller allocate less than one of its resources, so the layer
+   keeps saturating, and the test accepts a host that wraps.
++  Behind the Xbox-ABI proxy (device slots 25 and 56) a 2D render target of a listed colour format with one sample is
++  padded to whole console tiles: the size is the sum over its mips (MipLevels 0 is the full chain, an odd extent
++  rounds up), each mip rounded up to the RDNA2 SW_64KB_D tile shape (`runtime/src/gfx10_tiling.h`: 256 x 128 pixels
++  for 2-byte elements, 128 x 128 for 4-byte, 128 x 64 for 8-byte, 64 x 64 for 16-byte), with the first mip that fits
++  in half a tile's width and a whole tile's height, and the mips after it, sharing one tail tile, times the array
++  size. A 1920 x 1080 RGBA8 target is 135 tiles, 8,847,360 bytes, where the PC answer is 8,323,072. The proxy lays
++  the descriptions out as the PC device does (each at its own alignment, the total rounded up to the largest
++  alignment, sums saturating) with each render target at the larger of its console size and its PC size; a 4 MiB
++  aligned multisampled neighbour therefore keeps its place (a 1 x 1 four-sample target and a 1080p target need 16 MiB,
++  not 12.5). Slot 56 reports the same offsets. The PC layout stands when no description grows
++  (`d3d12_xs_alloc_size.h`; `xs_proxy_mock_test`). **Assumption**: the
++  retail title's own sizes are not measured (#6982, stop 17), so that its allocation is these shapes and no DCC or
++  CMask memory is open until they are.
++  The descriptions the title passes to slot 25 carry console values (layout word `0x101`/`0x1`, flag bits above the PC
++  ones). For console-form calls or descriptors explicitly using layout `0x101`, the proxy strips Xbox-only flags and
++  translates layout `0x101` to ROW_MAJOR for buffers or UNKNOWN for textures. Other PC-form descriptors reach the host
++  unchanged for validation (`d3d12_xs_desc_clean.h`; #6982 section 3.7).
+ - `GetAdapterLuid` (implemented): `VkPhysicalDeviceIDProperties::deviceLUID`, which on Windows is the DXGI
+   adapter's LUID; `d3d12_fence_timing_test` finds it with `IDXGIFactory4::EnumAdapterByLuid` (RTX 4090, driver
+   621.14). A driver that reports `deviceLUIDValid = VK_FALSE` gets a zero LUID, logged.
+@@ -2229,6 +2246,13 @@ The trace will enumerate them.
+   unknown types and node masks above 1 get an all-zero answer, logged. The test compares `DEFAULT`, `UPLOAD` and
+   `READBACK` byte for byte with the host runtime's answer when the host adapter has the layer's architecture (RTX
+   4090: identical); `d3d12_heap_properties` compares the `L1` heaps with the layer's own adapter.
++  The retail executable calls it (device slot 26) with the buffer for the returned struct in RCX and the device in
++  RDX, node mask in R8 and heap type in R9: three calls right after device creation, node mask 1 and types 1, 2
++  and 3 (measured under `gta6rt --run` with a register probe in the slot's thunk). A PC C++ method has the device
++  in RCX and the buffer in RDX, so the Xbox-ABI proxy takes the console form when RDX holds the proxy
++  (`d3d12_xs_device.cpp`; `xs_proxy_mock_test`, `device_proxy_test`). Slot 43 returns a struct too and the
++  proxy still forwards it in the PC form: no call of slot 43 has been seen. Slots 25 and 56 take the same form by the
++  same rule (reported later in the boot, #6982; not measured), as #6973 first did for slot 25.
+ - Residency and power (D3D-33) are no-ops that still check their arguments (`d3d12_vulkan_device.cpp`, tested in
+   `d3d12_vulkan_device_test`). Vulkan has no residency API: memory from `vkAllocateMemory` stays usable until
+   `vkFreeMemory`, and paging under pressure is the kernel driver's job, so every pageable object is always resident.
+@@ -4158,8 +4182,9 @@ on a PC device behind the Xbox-ABI proxy). Measured:
+ 
+ - `amd_fidelityfx_loader_xbox.dll`, `Bink2Scarlett.dll`, `libHttpClient.GDK.dll`, `XCurl.dll`: no `d3d12_xs`
+   imports.
+-- The package layout XML, chunk 1001, lists `game_scarlett_master.exe`; the file is absent from the folder. No
+-  claim in this document depends on the executable's contents.
++- The package layout XML, chunk 1001, lists `game_scarlett_master.exe`; the file is absent from the folder. One
++  claim in this document comes from running the executable from a player's own copy: how it calls device slot 26
++  (section 4.1; register roles and argument values only). No other claim depends on the executable's contents.
+ - The repository's existing import survey (`docs/design.md`, "Baseline already recorded") records that the 16
+   bundled DLLs need only `xmem` and the two `d3d12_xs` root-signature calls; our scan of the six non-CRT DLLs is
+   consistent.
+diff --git a/docs/design.md b/docs/design.md
+index 25fb9a0703..4ea76da461 100644
+--- a/docs/design.md
++++ b/docs/design.md
+@@ -181,7 +181,9 @@ Full-scan indexes are also saved to `%LOCALAPPDATA%\RpfPreview\Indexes`, so the
+   `CreateCommittedResource` with the Xbox `0x101`/`0x1` layout word replaced by the PC layout. Slots 9/10 are
+   `ID3D12DescriptorHeap` methods, not device methods. The PC heap getters take a hidden return pointer (RDX),
+   while Xbox expects the 8-byte handle in RAX, so slot 14 wraps the heap and slots 9/10 convert it. The heap holds
+-  a reference to the device proxy and its `GetDevice` returns that same proxy. Queues, fences, command lists and
++  a reference to the device proxy and its `GetDevice` returns that same proxy. The retail executable calls the
++  struct-returning device methods with the C ABI, return buffer first: `GetCustomHeapProperties` (slot 26) is
++  measured as `rcx` = buffer, `rdx` = device. Slots 25 and 26 take that form, and still take the PC one. Queues, fences, command lists and
+   `PresentX` extensions remain unimplemented.
+ - PSO metadata is a new variant (`PSIN`, `LSCH` schema, `LENM`, `LSNS`, `LGID`, `LRSC`, `CHKS`, little-endian).
+   CodeWalker's parser reads the container but not the new schema; dump it once the exe gives the field names.
+diff --git a/runtime/shims/d3d12_xs_alloc_size.h b/runtime/shims/d3d12_xs_alloc_size.h
+new file mode 100644
+index 0000000000..3321c4ec88
+--- /dev/null
++++ b/runtime/shims/d3d12_xs_alloc_size.h
+@@ -0,0 +1,156 @@
++// Console allocation sizes for render targets, for the Xbox-ABI device proxy's slots 25 and 56 (GetResourceAllocationInfo and GetResourceAllocationInfo1).
++//
++// Why: the retail title checks a fixed memory budget against what its first full-screen render targets used and asserts
++// when more than 2 MiB is left over (docs/retail_boot_chain.md, stop 17, #6982). The PC device sizes a 2D render target
++// from the Vulkan driver's memory requirements, which is about width x height x element bytes. The console lays a
++// render target out in 64 KiB tiles (the RDNA2 SW_64KB layouts), so its allocation is the surface padded to whole
++// tiles: for 4-byte elements a tile is 128 x 128 pixels, and 1080 rows take nine tile rows, not 8.4. The PC size is
++// smaller by that padding, summed over every full-screen target.
++//
++// What this is: the tile shapes are the RDNA2 SW_64KB_D shapes of runtime/src/gfx10_tiling.h (Mesa addrlib patterns,
++// validated against real textures in docs/textures.md). That a console render target uses these shapes and no extra
++// (DCC, CMask) memory in its allocation size is an assumption: the title's own sizes are not measured. The rule only
++// ever makes a size larger than the PC device's own answer, never smaller. The mip tail follows AMD's addrlib
++// (gfx10, 2D): a mip extent is rounded up (ShiftCeil), and the tail starts at the first mip that fits in half a tile's
++// width and a whole tile's height; the tail is one tile.
++#pragma once
++
++#include "../src/gfx10_tiling.h"
++
++#include <windows.h>
++#include <d3d12.h>
++
++#include <algorithm>
++#include <bit>
++#include <cstddef>
++#include <cstdint>
++
++namespace rt::d3d12_xs {
++
++constexpr UINT64 kConsoleTileBytes = 64 * 1024;  // one SW_64KB tile
++
++// Bytes per element of the colour formats a render target takes, or 0 for any other format (the PC size then stays).
++inline std::size_t render_target_element_bytes(DXGI_FORMAT format) {
++    switch (format) {
++        case DXGI_FORMAT_R8_TYPELESS: case DXGI_FORMAT_R8_UNORM: case DXGI_FORMAT_R8_UINT:
++        case DXGI_FORMAT_R8_SNORM: case DXGI_FORMAT_R8_SINT: case DXGI_FORMAT_A8_UNORM:
++            return 1;
++        case DXGI_FORMAT_R8G8_TYPELESS: case DXGI_FORMAT_R8G8_UNORM: case DXGI_FORMAT_R8G8_UINT:
++        case DXGI_FORMAT_R8G8_SNORM: case DXGI_FORMAT_R8G8_SINT: case DXGI_FORMAT_R16_TYPELESS:
++        case DXGI_FORMAT_R16_FLOAT: case DXGI_FORMAT_R16_UNORM: case DXGI_FORMAT_R16_UINT:
++        case DXGI_FORMAT_R16_SNORM: case DXGI_FORMAT_R16_SINT: case DXGI_FORMAT_B5G6R5_UNORM:
++        case DXGI_FORMAT_B5G5R5A1_UNORM:
++            return 2;
++        case DXGI_FORMAT_R10G10B10A2_TYPELESS: case DXGI_FORMAT_R10G10B10A2_UNORM:
++        case DXGI_FORMAT_R10G10B10A2_UINT: case DXGI_FORMAT_R11G11B10_FLOAT:
++        case DXGI_FORMAT_R8G8B8A8_TYPELESS: case DXGI_FORMAT_R8G8B8A8_UNORM:
++        case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: case DXGI_FORMAT_R8G8B8A8_UINT:
++        case DXGI_FORMAT_R8G8B8A8_SNORM: case DXGI_FORMAT_R8G8B8A8_SINT:
++        case DXGI_FORMAT_B8G8R8A8_TYPELESS: case DXGI_FORMAT_B8G8R8A8_UNORM:
++        case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: case DXGI_FORMAT_B8G8R8X8_TYPELESS:
++        case DXGI_FORMAT_B8G8R8X8_UNORM: case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
++        case DXGI_FORMAT_R16G16_TYPELESS: case DXGI_FORMAT_R16G16_FLOAT: case DXGI_FORMAT_R16G16_UNORM:
++        case DXGI_FORMAT_R16G16_UINT: case DXGI_FORMAT_R16G16_SNORM: case DXGI_FORMAT_R16G16_SINT:
++        case DXGI_FORMAT_R32_TYPELESS: case DXGI_FORMAT_R32_FLOAT: case DXGI_FORMAT_R32_UINT:
++        case DXGI_FORMAT_R32_SINT:
++            return 4;
++        case DXGI_FORMAT_R16G16B16A16_TYPELESS: case DXGI_FORMAT_R16G16B16A16_FLOAT:
++        case DXGI_FORMAT_R16G16B16A16_UNORM: case DXGI_FORMAT_R16G16B16A16_UINT:
++        case DXGI_FORMAT_R16G16B16A16_SNORM: case DXGI_FORMAT_R16G16B16A16_SINT:
++        case DXGI_FORMAT_R32G32_TYPELESS: case DXGI_FORMAT_R32G32_FLOAT: case DXGI_FORMAT_R32G32_UINT:
++        case DXGI_FORMAT_R32G32_SINT:
++            return 8;
++        case DXGI_FORMAT_R32G32B32A32_TYPELESS: case DXGI_FORMAT_R32G32B32A32_FLOAT:
++        case DXGI_FORMAT_R32G32B32A32_UINT: case DXGI_FORMAT_R32G32B32A32_SINT:
++            return 16;
++        default:
++            return 0;
++    }
++}
++
++// The console's allocation size for a single-sampled 2D render target, or 0 when the rule does not apply (not a 2D
++// texture, not a render target, more than one sample, an unlisted format, an empty extent, or a size that overflows).
++// MipLevels 0 is the full chain, as on the PC device. A mip extent is rounded up. Mips before the tail are padded to
++// whole tiles; the first mip that fits in half a tile's width and the whole tile height, and every mip after it, share
++// one tail tile. Slices add up.
++inline UINT64 console_render_target_size(const D3D12_RESOURCE_DESC& desc) {
++    if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D) return 0;
++    if (!(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)) return 0;
++    if (desc.SampleDesc.Count > 1) return 0;
++    const std::size_t element_bytes = render_target_element_bytes(desc.Format);
++    if (!element_bytes || !desc.Width || !desc.Height || !desc.DepthOrArraySize) return 0;
++
++    const UINT full_chain = static_cast<UINT>(std::bit_width(std::max<UINT64>(desc.Width, desc.Height)));
++    const UINT mips = desc.MipLevels ? std::min<UINT>(desc.MipLevels, full_chain) : full_chain;
++    UINT64 slice = 0;
++    bool tail = false;
++    for (UINT mip = 0; mip < mips; ++mip) {
++        const UINT64 width = std::max<UINT64>((desc.Width + (UINT64{1} << mip) - 1) >> mip, 1);
++        const UINT64 height = std::max<UINT64>((UINT64{desc.Height} + (UINT64{1} << mip) - 1) >> mip, 1);
++        leonida::gfx10::TiledSurface2D surface;
++        if (width > UINT32_MAX ||
++            !leonida::gfx10::TiledSurface2D::make(leonida::gfx10::TileMode::sw_64kb_d, element_bytes,
++                                                  static_cast<std::size_t>(width), static_cast<std::size_t>(height),
++                                                  surface))
++            return 0;
++        if (width <= surface.tile_width() / 2 && height <= surface.tile_height()) {
++            tail = true;
++            break;
++        }
++        slice += surface.tiled_size();
++    }
++    if (tail) slice += kConsoleTileBytes;
++    const UINT64 slices = desc.DepthOrArraySize;
++    if (slice > UINT64_MAX / slices) return 0;
++    return slice * slices;
++}
++
++// Rounds up to a multiple of `to`, stopping at the last multiple below 2^64 instead of wrapping (as the PC device's
++// totals do).
++inline UINT64 align_up_saturating(UINT64 value, UINT64 to) {
++    return value > UINT64_MAX - (to - 1) ? UINT64_MAX / to * to : (value + to - 1) / to * to;
++}
++
++// Lays the descriptions out as the PC device does (one after another, each at its own alignment, the total rounded up
++// to the largest alignment), with a render target's size taken as its console size when that is larger than the PC
++// size. pc_one(i) is the PC device's answer for description i alone. Sizes are rounded to each description's own
++// alignment, so a multisampled neighbour at 4 MiB keeps its place, and sums saturate instead of wrapping. When
++// `each` is given it receives every description's offset, alignment and size.
++//
++// Returns false, and writes nothing, when no description is a console render target that grows, or when the PC
++// device refuses one: the PC answer then stands. A true answer is never below what the PC device gave for the same
++// descriptions laid out in that way.
++template <class PcOne>
++bool console_placement(const D3D12_RESOURCE_DESC* descs, UINT count, PcOne pc_one,
++                       D3D12_RESOURCE_ALLOCATION_INFO& total, D3D12_RESOURCE_ALLOCATION_INFO1* each) {
++    if (!descs) return false;
++    bool any_target = false;
++    for (UINT i = 0; i < count && !any_target; ++i) any_target = console_render_target_size(descs[i]) != 0;
++    if (!any_target) return false;
++    // Two passes when `each` is wanted: the first decides, the second writes, so a refusal or a list that does not
++    // grow leaves the array as the PC device filled it.
++    for (const bool write : {false, true}) {
++        if (write && !each) break;
++        bool grows = false;
++        UINT64 end = 0, alignment = 1;
++        for (UINT i = 0; i < count; ++i) {
++            const D3D12_RESOURCE_ALLOCATION_INFO one = pc_one(i);
++            if (one.SizeInBytes == UINT64_MAX || !one.Alignment) return false;
++            UINT64 size = one.SizeInBytes;
++            const UINT64 console = console_render_target_size(descs[i]);
++            if (console > size) {
++                size = align_up_saturating(console, one.Alignment);
++                grows = true;
++            }
++            const UINT64 offset = align_up_saturating(end, one.Alignment);
++            if (write) each[i] = {offset, one.Alignment, size};
++            end = size > UINT64_MAX - offset ? UINT64_MAX : offset + size;
++            alignment = std::max(alignment, one.Alignment);
++        }
++        if (!grows) return false;
++        total = {align_up_saturating(end, alignment), alignment};
++    }
++    return true;
++}
++
++}  // namespace rt::d3d12_xs
+diff --git a/runtime/shims/d3d12_xs_desc_clean.h b/runtime/shims/d3d12_xs_desc_clean.h
+new file mode 100644
+index 0000000000..e79fbda353
+--- /dev/null
++++ b/runtime/shims/d3d12_xs_desc_clean.h
+@@ -0,0 +1,61 @@
++// The PC form of a resource description the retail title builds for the console, for the Xbox-ABI device proxy.
++//
++// The title's D3D12_RESOURCE_DESC carries console layout words and flag bits the PC device cannot take
++// (docs/retail_boot_chain.md, #6982). The slot 25 cleaner returns a copy of the title's description.
++#pragma once
++
++#include <windows.h>
++#include <d3d12.h>
++
++#include <cstdint>
++
++namespace rt::d3d12_xs {
++
++// The D3D12_RESOURCE_FLAGS bits the PC runtime defines; every other bit is a console one.
++constexpr std::uint32_t kPcResourceFlagsMask =
++    D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL |
++    D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE |
++    D3D12_RESOURCE_FLAG_ALLOW_CROSS_ADAPTER | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS |
++    D3D12_RESOURCE_FLAG_VIDEO_DECODE_REFERENCE_ONLY | D3D12_RESOURCE_FLAG_VIDEO_ENCODE_REFERENCE_ONLY |
++    D3D12_RESOURCE_FLAG_RAYTRACING_ACCELERATION_STRUCTURE;
++
++inline const auto kXboxTiledResourceLayout = static_cast<D3D12_TEXTURE_LAYOUT>(0x101);
++
++inline bool is_depth_resource_format(DXGI_FORMAT format) {
++    switch (format) {
++        case DXGI_FORMAT_D16_UNORM:
++        case DXGI_FORMAT_D24_UNORM_S8_UINT:
++        case DXGI_FORMAT_D32_FLOAT:
++        case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
++        case DXGI_FORMAT_R16_TYPELESS:
++        case DXGI_FORMAT_R24G8_TYPELESS:
++        case DXGI_FORMAT_R32_TYPELESS:
++        case DXGI_FORMAT_R32G8X24_TYPELESS:
++            return true;
++        default:
++            return false;
++    }
++}
++
++// Strip Xbox-only flags and preserve the three supported PC layouts. In addition to 0x101, zebraso measured
++// layout words 0x102 and 0x105 reaching slot 25 during a retail boot.
++inline D3D12_RESOURCE_DESC pc_resource_desc(const D3D12_RESOURCE_DESC& xbox) {
++    D3D12_RESOURCE_DESC pc = xbox;
++    if (pc.Layout != D3D12_TEXTURE_LAYOUT_UNKNOWN &&
++        pc.Layout != D3D12_TEXTURE_LAYOUT_ROW_MAJOR &&
++        pc.Layout != D3D12_TEXTURE_LAYOUT_64KB_STANDARD_SWIZZLE) {
++        pc.Layout = pc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER ? D3D12_TEXTURE_LAYOUT_ROW_MAJOR
++                                                                   : D3D12_TEXTURE_LAYOUT_UNKNOWN;
++    }
++    std::uint32_t flags = static_cast<std::uint32_t>(xbox.Flags) & kPcResourceFlagsMask;
++    // zebraso measured slot 25 rejecting B5G5R5A1 render targets with UAV on an RTX 5080 without
++    // storage-image support for that format. Depth-stencil resources also cannot be UAVs on PC.
++    if (pc.Format == DXGI_FORMAT_B5G5R5A1_UNORM ||
++        ((flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) && is_depth_resource_format(pc.Format))) {
++        flags &= ~static_cast<std::uint32_t>(D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
++    }
++    pc.Flags = static_cast<D3D12_RESOURCE_FLAGS>(flags);
++    return pc;
++}
++
++}  // namespace rt::d3d12_xs
+diff --git a/runtime/shims/d3d12_xs_device.cpp b/runtime/shims/d3d12_xs_device.cpp
+index e17a80353b..e82bfb8507 100644
+--- a/runtime/shims/d3d12_xs_device.cpp
++++ b/runtime/shims/d3d12_xs_device.cpp
+@@ -3,12 +3,13 @@
+ // How forwarding works: the proxy object's first word is a vtable built once from one thunk per slot. A thunk
+ // receives the proxy in RCX, replaces it with the PC device pointer from offset 8, and tail-calls the PC method at
+ // the same index through a 15-argument integer prototype. Every PC D3D12 device method takes integer/pointer
+-// arguments only, so the x64 registers and stack words line up exactly; methods that return a struct keep their
+-// hidden return pointer in RDX, which is passed through as the first argument unchanged. The measured exceptions
+-// are IUnknown (0-2), slot 14 (which wraps the heap), 62 and 76, plus the heap proxy's 9/10 conversion from the
+-// PC hidden-pointer form to the Xbox RAX form. Slots 8/75 (command queues), 36 (fences) and 32 (a shared fence) wrap
+-// what they create in queue and fence proxies built the same way, and slots 31/34/35/45/46/50 hand the real objects
+-// behind heap, queue and fence proxies to the real device (see the command queue and fence section).
++// arguments only, so the x64 registers and stack words line up exactly. The measured exceptions are IUnknown (0-2),
++// slot 14 (which wraps the heap), 62 and 76, 26 (the title passes the return buffer in RCX and the device in RDX), the
++// struct-returning slot 25 (same C ABI form: see "Struct-returning device methods" below), plus the heap proxy's 9/10
++// conversion from the PC hidden-pointer form to the Xbox RAX form. Slots 8/75 (command queues), 36 (fences) and 32
++// (a shared fence) wrap what they create in queue and fence proxies built the same way, and slots 31/34/35/45/46/50
++// hand the real objects behind heap, queue and fence proxies to the real device (see the command queue and fence
++// section).
+ //
+ // A thunk declares 14 argument words, but the title passes only as many as the method takes, so the caller's frame
+ // may end right after the four register homes. The compiler owns a function's incoming stack-argument slots and may
+@@ -24,12 +25,15 @@
+ // behind the device before a presenter exists, so WaitFrameEventX returns at once with a fresh non-zero token.
+ #include "d3d12_xs_device.h"
+ #include "d3d12_trace.h"
++#include "d3d12_xs_alloc_size.h"
++#include "d3d12_xs_desc_clean.h"
+ #include "../src/shader_library.h"  // leonida::fspx_payload_from_parts for slot 67
+ 
+ #include <windows.h>
+ #include <dxgi1_4.h>
+ 
+ #include <atomic>
++#include <functional>
+ #include <cerrno>
+ #include <cstddef>
+ #include <cstdint>
+@@ -38,6 +42,7 @@
+ #include <cstring>
+ #include <iterator>
+ #include <new>
++#include <vector>
+ #include <memory>
+ #include <utility>
+ 
+@@ -127,7 +132,8 @@ const char* slot_name(unsigned slot) {
+         case 11: return "CreateComputePipelineState (PC slot 11)";
+         case 14: return "CreateDescriptorHeap";
+         case 16: return "CreateRootSignature";
+-        case 25: return "GetResourceAllocationInfo";
++        case 25: return "GetResourceAllocationInfo (C or PC form)";
++        case 26: return "GetCustomHeapProperties (C or PC form)";
+         case 27: return "CreateCommittedResource (PC slot 27)";
+         case 31: return "CreateSharedHandle (proxies unwrapped)";
+         case 32: return "OpenSharedHandle (a fence comes back wrapped)";
+@@ -139,6 +145,7 @@ const char* slot_name(unsigned slot) {
+         case 46: return "SetResidencyPriority (proxies unwrapped)";
+         case 48: return "Xbox CreateCommandQueueX -> queue proxy";
+         case 50: return "EnqueueMakeResident (proxies unwrapped)";
++        case 56: return "GetResourceAllocationInfo1 (C or PC form)";
+         case 62: return "Xbox CreateComputePipelineState";
+         case 67: return "Xbox DeserializeComputePipelineStateX";
+         case 73: return "Xbox CreateCommandListX -> PC CreateCommandList";
+@@ -1480,6 +1487,21 @@ HRESULT proxy_create_resource(DeviceProxy* self, const D3D12_HEAP_PROPERTIES* he
+                                                *riid, out);
+ }
+ 
++// Device slot 26, GetCustomHeapProperties, as the retail executable calls it. Measured on 1.0.2.1 under
++// gta6rt --run with a register probe in this slot's thunk: three calls right after device creation, each with the
++// device proxy in RDX and not in RCX, R8 = 1 and R9 = 1, 2, 3 (node mask 1; DEFAULT, UPLOAD, READBACK). So the
++// buffer for the returned D3D12_HEAP_PROPERTIES is in RCX and the device in RDX. That is how x64 passes them to a
++// plain function that takes the device as its first argument and returns a struct; a PC C++ method has the device
++// in RCX and the buffer in RDX. The forwarder took RCX for the proxy, read the PC vtable out of the title's stack
++// buffer and faulted. The buffer's address goes back in RAX, as that convention returns it; what the title does with
++// RAX is not measured.
++D3D12_HEAP_PROPERTIES* proxy_get_custom_heap_properties(D3D12_HEAP_PROPERTIES* out, DeviceProxy* self,
++                                                        UINT node_mask, D3D12_HEAP_TYPE heap_type) {
++    note_slot(26);
++    *out = self->real->GetCustomHeapProperties(node_mask, heap_type);
++    return out;
++}
++
+ template <unsigned Slot>
+ std::uint64_t WINAPI proxy_slot(DeviceProxy* self, std::uint64_t a1, std::uint64_t a2, std::uint64_t a3,
+                                 std::uint64_t a4, std::uint64_t a5, std::uint64_t a6, std::uint64_t a7,
+@@ -1530,6 +1552,14 @@ std::uint64_t WINAPI proxy_slot(DeviceProxy* self, std::uint64_t a1, std::uint64
+             reinterpret_cast<const D3D12_CLEAR_VALUE*>(a5), reinterpret_cast<const IID*>(a6),
+             reinterpret_cast<void**>(a7)));
+     } else {
++        if constexpr (Slot == 26) {
++            // The console form has the device in RDX. A PC C++ caller has the proxy in RCX and its return buffer in
++            // RDX; that call goes to the forwarder below, as before.
++            if (is_device_proxy(reinterpret_cast<const void*>(a1)))
++                return reinterpret_cast<std::uint64_t>(proxy_get_custom_heap_properties(
++                    reinterpret_cast<D3D12_HEAP_PROPERTIES*>(self), reinterpret_cast<DeviceProxy*>(a1),
++                    static_cast<UINT>(a2), static_cast<D3D12_HEAP_TYPE>(static_cast<std::uint32_t>(a3))));
++        }
+         note_slot(Slot);
+         // Xbox device slots, before the PC vtable is indexed: the public HLE's 78/79/80 would otherwise reach
+         // CreateReservedResource2/CreateSampler2 or fall past an 80-slot table, and 48/73 would reach unrelated PC
+@@ -1576,10 +1606,132 @@ void fill_vtable(void** vtable, std::index_sequence<I...>) {
+     ((vtable[I] = reinterpret_cast<void*>(&proxy_slot<static_cast<unsigned>(I)>) ), ...);
+ }
+ 
++// ---- Struct-returning device methods: the console title calls them with the C ABI ----
++//
++// The PC vtable (MSVC C++) takes `this` in RCX and, for a struct return, the hidden return pointer in RDX. The console
++// title does not. Measured with the retail game_scarlett_master.exe 1.0.2.1 under gta6rt --run: its first
++// GetCustomHeapProperties call (device slot 26) is `rcx = return buffer on the caller's stack, rdx = the device,
++// r8 = node mask 1, r9 = heap type` (DEFAULT, then UPLOAD), and it reads the result from that buffer. That is the C
++// convention, where a struct wider than 8 bytes comes back through a hidden *first* argument (an 8-byte one comes back
++// in RAX, which is what the heap proxy's slots 9/10 already measured). The generic forwarder took the return buffer
++// for the device and crashed on its vtable.
++//
++// The runtime's own code and tests still call the proxy through d3d12.h, in the PC form, so these thunks accept both,
++// as the heap proxy's 9/10 do: whichever of the first two arguments is the device proxy (its first word is the proxy
++// vtable) is `this`, and the other is the return buffer. A return buffer never starts with that vtable pointer: the
++// C-form caller hands over uninitialised memory to be written, and the PC-form caller is this runtime. The buffer is
++// returned in RAX, as both conventions require.
++//   slot 25 GetResourceAllocationInfo -> D3D12_RESOURCE_ALLOCATION_INFO (16 bytes): same rule as slot 26 (inferred,
++//           no call site measured yet)
++//   slot 26 GetCustomHeapProperties   -> D3D12_HEAP_PROPERTIES (20 bytes): measured; it has its own thunk above
++//           (proxy_get_custom_heap_properties), not this one
++// Not changed: slot 43 GetAdapterLuid (an 8-byte LUID; by the same rule the title would expect it in RAX, but no call
++// site is measured yet, so it still forwards in the PC form).
++void** get_vtable();
++
++struct StructReturnCall {
++    DeviceProxy* self;
++    void* ret;
++    bool console_abi;
++};
++
++StructReturnCall struct_return_call(std::uint64_t a0, std::uint64_t a1) {
++    void** const vtable = get_vtable();
++    if (a0 && *reinterpret_cast<void***>(a0) == vtable)  // PC form: this, return buffer
++        return {reinterpret_cast<DeviceProxy*>(a0), reinterpret_cast<void*>(a1), false};
++    return {reinterpret_cast<DeviceProxy*>(a1), reinterpret_cast<void*>(a0), true};  // C form: return buffer, this
++}
++
++// The console size of a list of descriptions (d3d12_xs_alloc_size.h): the PC device's answer with every console render
++// target laid out at its console size, each at its own alignment. `info` is the PC answer and is replaced only when
++// the console layout is larger. `each` is the per-description array of slot 56, or null.
++void apply_console_placement(const D3D12_RESOURCE_DESC* descs, UINT count, D3D12_RESOURCE_ALLOCATION_INFO& info,
++                             D3D12_RESOURCE_ALLOCATION_INFO1* each,
++                             const std::function<D3D12_RESOURCE_ALLOCATION_INFO(UINT)>& pc_one, unsigned slot) {
++    if (info.SizeInBytes == UINT64_MAX) return;
++    D3D12_RESOURCE_ALLOCATION_INFO console{};
++    if (!console_placement(descs, count, pc_one, console, each)) return;
++    static std::atomic<bool> logged{false};
++    if (!logged.exchange(true, std::memory_order_relaxed))
++        std::fprintf(stderr,
++                     "[rt] d3d12_xs: slot %u: render targets sized as console tiles, %llu B for %llu B on %u "
++                     "description(s)\n",
++                     slot, static_cast<unsigned long long>(console.SizeInBytes),
++                     static_cast<unsigned long long>(info.SizeInBytes), static_cast<unsigned>(count));
++    if (console.SizeInBytes >= info.SizeInBytes) info = console;
++}
++
++void* WINAPI proxy_get_resource_allocation_info(std::uint64_t a0, std::uint64_t a1, std::uint64_t visible_mask,
++                                                std::uint64_t count, const D3D12_RESOURCE_DESC* descs) {
++    note_slot(25);
++    const StructReturnCall call = struct_return_call(a0, a1);
++    ID3D12Device* const real = call.self->real;
++    // Normalize console descriptors in a copy. PC calls can also pass the Xbox tiled layout explicitly. Otherwise
++    // their flags and layout reach the host unchanged so the host can validate them.
++    const UINT desc_count = static_cast<UINT>(count);
++    std::unique_ptr<D3D12_RESOURCE_DESC[]> clean;
++    if (descs && desc_count) {
++        clean.reset(new (std::nothrow) D3D12_RESOURCE_DESC[desc_count]);
++        if (!clean) {
++            *static_cast<D3D12_RESOURCE_ALLOCATION_INFO*>(call.ret) = {UINT64_MAX, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT};
++            return call.ret;
++        }
++        for (UINT i = 0; i < desc_count; ++i) {
++            const auto& desc = descs[i];
++            clean[i] = call.console_abi || desc.Layout == kXboxTiledResourceLayout ? pc_resource_desc(desc) : desc;
++        }
++        descs = clean.get();
++    }
++    const UINT mask = static_cast<UINT>(visible_mask);
++    D3D12_RESOURCE_ALLOCATION_INFO info = real->GetResourceAllocationInfo(mask, desc_count, descs);
++    apply_console_placement(descs, desc_count, info, nullptr,
++                            [&](UINT i) { return real->GetResourceAllocationInfo(mask, 1, &descs[i]); }, 25);
++    *static_cast<D3D12_RESOURCE_ALLOCATION_INFO*>(call.ret) = info;
++    return call.ret;
++}
++
++// Slot 56, ID3D12Device4::GetResourceAllocationInfo1: the same answer, and the per-description offsets follow the
++// padded sizes, so a title that places its resources at those offsets does not overlap them. The call is forwarded
++// as it came; the console layout then replaces the total and the offsets.
++void* WINAPI proxy_get_resource_allocation_info1(std::uint64_t a0, std::uint64_t a1, std::uint64_t visible_mask,
++                                                 std::uint64_t count, const D3D12_RESOURCE_DESC* descs,
++                                                 D3D12_RESOURCE_ALLOCATION_INFO1* each) {
++    const StructReturnCall call = struct_return_call(a0, a1);
++    DeviceProxy* const self = call.self;
++    note_slot(56);
++    if (56 >= self->slot_count) {
++        return reinterpret_cast<void*>(hr_to_u64(refuse_beyond_device(56, self->slot_count)));
++    }
++    using Fn = void*(WINAPI*)(void*, void*, UINT, UINT, const D3D12_RESOURCE_DESC*, D3D12_RESOURCE_ALLOCATION_INFO1*);
++    const UINT n = static_cast<UINT>(count);
++    // The per-resource array is optional (_Out_writes_opt_). The console total must not depend on whether the
++    // caller asked for it, so without one the host's per-resource answers go to a local array (found by Alpha325).
++    std::vector<D3D12_RESOURCE_ALLOCATION_INFO1> local;
++    if (!each && descs && n) {
++        try {
++            local.resize(n);
++            each = local.data();
++        } catch (const std::bad_alloc&) {
++            each = nullptr;  // the host total stands
++        }
++    }
++    void* const returned = reinterpret_cast<Fn>(self->real_vtable[56])(
++        self->real, call.ret, static_cast<UINT>(visible_mask), n, descs, each);
++    if (each) {
++        auto& info = *static_cast<D3D12_RESOURCE_ALLOCATION_INFO*>(call.ret);
++        apply_console_placement(descs, n, info, each, [&](UINT i) {
++            return D3D12_RESOURCE_ALLOCATION_INFO{each[i].SizeInBytes, each[i].Alignment};
++        }, 56);
++    }
++    return returned;
++}
++
+ void** get_vtable() {
+     static void** vtable = [] {
+         static void* storage[kMaxSlots];
+         fill_vtable(storage, std::make_index_sequence<kMaxSlots>{});
++        storage[25] = reinterpret_cast<void*>(&proxy_get_resource_allocation_info);
++        storage[56] = reinterpret_cast<void*>(&proxy_get_resource_allocation_info1);
+         return storage;
+     }();
+     return vtable;
+@@ -1704,8 +1856,8 @@ ID3D12Device* device_proxy_real_device(const void* device) {
+ }
+ 
+ bool device_slot_overridden(unsigned slot) {
+-    if (slot <= 2 || slot == 8 || slot == 9 || slot == 14 || slot == 31 || slot == 32 || slot == 34 || slot == 35 ||
+-        slot == 36 || slot == 45 || slot == 46 || slot == 50 || slot == 62 || slot == 67 ||
++    if (slot <= 2 || slot == 8 || slot == 9 || slot == 14 || slot == 25 || slot == 26 || slot == 31 || slot == 32 || slot == 34 ||
++        slot == 35 || slot == 36 || slot == 45 || slot == 46 || slot == 50 || slot == 56 || slot == 62 || slot == 67 ||
+         slot == 75 || slot == 76)
+         return true;
+     const XboxDeviceSlotRoutes& routes = xbox_device_slot_routes();
+diff --git a/runtime/shims/d3d12_xs_device.h b/runtime/shims/d3d12_xs_device.h
+index 0019ec5069..566857c231 100644
+--- a/runtime/shims/d3d12_xs_device.h
++++ b/runtime/shims/d3d12_xs_device.h
+@@ -1,12 +1,21 @@
+ // Xbox-ABI proxy around a PC ID3D12Device.
+ //
+ // Measured Xbox device deviations used here (vtable indices, x64):
++//   slot 26   GetCustomHeapProperties, the PC slot, but the retail executable calls it with the buffer for the
++//             returned struct in RCX and the device in RDX (node mask in R8, heap type in R9). A PC C++ method has
++//             the device in RCX and the buffer in RDX. The thunk takes the console form when RDX holds a device
++//             proxy, and forwards the PC form otherwise. Slots 25 and 43 return structs too and are still
++//             forwarded in the PC form: 25 is reported called the same way later in the boot (#6982), with console
++//             resource descriptions the PC method cannot take as they are, and no call of 43 has been seen.
+ //   slot 62   CreateComputePipelineState(desc, w2, w3, iid, out): two words (0 from XboxBvhBuilder, meaning unknown)
+ //             before the IID. The PC slot 62 is CreateStateObject.
+ //   slot 67   CreateComputePipelineState from native code (desc, iid, out): converts the Xbox native-code desc
+ //             (+0x00 root signature, +0x28 code, +0x30 size) to D3D12_COMPUTE_PIPELINE_STATE_DESC and forwards
+ //             to PC CreateComputePipelineState (slot 11). The PC slot 67 is CreateProtectedResourceSession1.
+ //   slot 76   resource creation -> PC CreateCommittedResource (PC slot 27), with the Xbox layout word ignored.
++//   slot 26   GetCustomHeapProperties, called by the retail title with the C ABI: return buffer in RCX, the device
++//             in RDX (the PC form is `this` in RCX, return buffer in RDX). Slot 25 (GetResourceAllocationInfo, also a
++//             struct wider than 8 bytes) takes the same form by the same rule. Both accept either form.
+ //   slot 48   CreateCommandQueueX(desc, riid, out) -> the same queue proxy as slot 8. The Xbox desc's first fields are
+ //             D3D12_COMMAND_QUEUE_DESC's (public HLE).
+ //   slot 73   CreateCommandListX(desc, allocator, initialState, riid, out) -> PC CreateCommandList(0, type, allocator,
+@@ -90,10 +99,10 @@ unsigned device_proxy_slot_count(const void* device);
+ ID3D12Device* device_proxy_real_device(const void* device);
+ 
+ // True for slots the proxy handles itself rather than forwarding verbatim: IUnknown (0-2), 8 and 75 (queue
+-// proxies), 9 (allocator proxies), 14, 31/34/35/45/46/50 (proxies unwrapped), 32 and 36 (fence proxies), 48/73 and
+-// 78/79/80 (the Xbox slots above, at their configured indices), 62, 67 and 76. Slot 10 is intentionally false: the
+-// measured 9/10 handle conversion is on the heap proxy, and device slot 9 is CreateCommandAllocator, which the proxy
+-// handles for the allocator proxy.
++// proxies), 9 (allocator proxies), 14, 26 (the console's struct-return form), 31/34/35/45/46/50 (proxies unwrapped),
++// 32 and 36 (fence proxies), 48/73 and 78/79/80 (the Xbox slots above, at their configured indices), 62, 67 and 76.
++// Slot 10 is intentionally false: the measured 9/10 handle conversion is on the heap proxy, and device slot 9 is
++// CreateCommandAllocator, which the proxy handles for the allocator proxy.
+ bool device_slot_overridden(unsigned slot);
+ 
+ // Queue and fence proxies created by device slots 8/75 and 36. The real_* accessors return the wrapped object
+diff --git a/runtime/test/device_proxy_test.cpp b/runtime/test/device_proxy_test.cpp
+index 46a853e7c3..0e9a339c8d 100644
+--- a/runtime/test/device_proxy_test.cpp
++++ b/runtime/test/device_proxy_test.cpp
+@@ -3,6 +3,7 @@
+ // It creates the proxy through the registered d3d12_xs!D3D12XboxCreateDevice shim, then calls the measured Xbox
+ // slots exactly as the guest would (raw function pointers, not the C++ interface):
+ //   slot 14  CreateDescriptorHeap (returns a heap proxy)
++//   slot 25/26 GetResourceAllocationInfo/GetCustomHeapProperties in the title's C form (return buffer first)
+ //   heap 9/10 GetCPU/GetGPUDescriptorHandleForHeapStart (Xbox: 8-byte handle in RAX; the PC heap uses the
+ //             hidden return pointer in RDX, so slot 14 wraps it)
+ //   slot 62  CreateComputePipelineState
+@@ -22,6 +23,7 @@
+ #include <wrl/client.h>
+ 
+ #include "d3d12_trace.h"
++#include "d3d12_xs_desc_clean.h"
+ #include "d3d12_xs_device.h"
+ #include "shims.h"
+ 
+@@ -199,6 +201,59 @@ int main(int argc, char** argv) {
+     const LUID real_luid = real ? real->GetAdapterLuid() : LUID{};
+     check(proxy_luid.LowPart == real_luid.LowPart && proxy_luid.HighPart == real_luid.HighPart,
+           "slot 43 forwards GetAdapterLuid (struct return)");
++    // Slot 25 returns a struct wider than 8 bytes. The console title calls it with the C ABI: the hidden
++    // return pointer first (RCX), then the device (RDX), then the arguments, and the buffer comes back in RAX
++    // (measured for slot 26 on the retail executable). Call slot 25 that way through a raw function pointer and compare
++    // with the PC device's own answer.
++    check(rt::d3d12_xs::device_slot_overridden(25), "device slot 25 is the C-ABI GetResourceAllocationInfo override");
++    if (real) {
++        using AllocInfoFn = D3D12_RESOURCE_ALLOCATION_INFO*(WINAPI*)(D3D12_RESOURCE_ALLOCATION_INFO*, void*, UINT, UINT,
++                                                                     const D3D12_RESOURCE_DESC*);
++        auto get_alloc_info = reinterpret_cast<AllocInfoFn>(proxy_vtbl[25]);
++        const D3D12_RESOURCE_DESC desc = buffer_desc();
++        D3D12_RESOURCE_ALLOCATION_INFO got{~0ull, ~0ull};
++        D3D12_RESOURCE_ALLOCATION_INFO* returned = get_alloc_info(&got, device.Get(), 0, 1, &desc);
++        // The proxy cleans the console layout word and flag bits before the PC call (stop 16), so the expected answer is
++        // the PC device's for the cleaned description (the raw 0x101 layout makes WARP answer UINT64_MAX).
++        const D3D12_RESOURCE_DESC clean = rt::d3d12_xs::pc_resource_desc(desc);
++        const D3D12_RESOURCE_ALLOCATION_INFO want = real->GetResourceAllocationInfo(0, 1, &clean);
++        check(want.SizeInBytes != UINT64_MAX, "WARP accepts the normalized slot-25 buffer description");
++        check(returned == &got, "slot 25 returns the caller's buffer in RAX");
++        check(got.SizeInBytes == want.SizeInBytes && got.Alignment == want.Alignment,
++              "slot 25 (C ABI) writes the PC device's GetResourceAllocationInfo into the caller's buffer");
++
++        // The runtime's own code calls the proxy through d3d12.h (PC form: this, then the return buffer). Slot 25
++        // still answers that form.
++        const D3D12_RESOURCE_ALLOCATION_INFO pc_info = device->GetResourceAllocationInfo(0, 1, &desc);
++        check(pc_info.SizeInBytes == want.SizeInBytes && pc_info.Alignment == want.Alignment,
++              "slot 25 still answers the PC (C++) form");
++    }
++
++    constexpr auto kUav = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
++    constexpr auto kDepthStencil = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
++    constexpr auto kRenderTarget = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++    const struct {
++        DXGI_FORMAT format;
++        D3D12_RESOURCE_FLAGS input;
++        D3D12_RESOURCE_FLAGS expected;
++        const char* message;
++    } flag_cases[] = {
++        {DXGI_FORMAT_B5G5R5A1_UNORM, kRenderTarget | kUav, kRenderTarget, "B5G5R5A1 keeps only RT"},
++        {DXGI_FORMAT_R32G8X24_TYPELESS, kDepthStencil | kUav, kDepthStencil, "R32G8X24 depth keeps only DS"},
++        {DXGI_FORMAT_R8G8B8A8_UNORM, kRenderTarget | kUav, kRenderTarget | kUav, "RGBA8 keeps RT and UAV"},
++        {DXGI_FORMAT_R32_FLOAT, kUav, kUav, "R32_FLOAT keeps UAV"},
++        {DXGI_FORMAT_R32_TYPELESS, kUav, kUav, "R32_TYPELESS without DS keeps UAV"},
++        {DXGI_FORMAT_D16_UNORM, kDepthStencil | kUav, kDepthStencil, "D16 depth keeps only DS"},
++    };
++    for (const auto& test : flag_cases) {
++        D3D12_RESOURCE_DESC desc{};
++        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++        desc.Format = test.format;
++        desc.Flags = test.input;
++        const auto clean = rt::d3d12_xs::pc_resource_desc(desc);
++        check(clean.Flags == test.expected && clean.Format == test.format && desc.Flags == test.input, test.message);
++    }
++
+     D3D12_RESOURCE_DESC reserved_desc = buffer_desc();
+     reserved_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+     ComPtr<ID3D12Resource> reserved;
+@@ -206,6 +261,41 @@ int main(int argc, char** argv) {
+                                         IID_PPV_ARGS(reserved.GetAddressOf()));
+     check(SUCCEEDED(hr) && reserved != nullptr, "slot 30 forwards CreateReservedResource (stack arguments)");
+ 
++    // Slot 26 the way the retail executable calls GetCustomHeapProperties: the buffer for the struct in RCX, the
++    // device in RDX, for the three heap types it asks about. The answer is the PC device's own, and nothing but
++    // the struct is written (the buffer sits in a pattern). On main this call read the PC vtable through the buffer.
++    check(rt::d3d12_xs::device_slot_overridden(26), "device slot 26 takes the console's struct-return form");
++    using XboxGetCustomHeapPropertiesFn =
++        D3D12_HEAP_PROPERTIES*(WINAPI*)(D3D12_HEAP_PROPERTIES*, void*, UINT, D3D12_HEAP_TYPE);
++    auto get_custom_heap = reinterpret_cast<XboxGetCustomHeapPropertiesFn>(proxy_vtbl[26]);
++    const D3D12_HEAP_TYPE heap_types[] = {D3D12_HEAP_TYPE_DEFAULT, D3D12_HEAP_TYPE_UPLOAD, D3D12_HEAP_TYPE_READBACK};
++    bool console_returns_buffer = true, console_matches_pc = real != nullptr, console_writes_only_struct = true;
++    for (const D3D12_HEAP_TYPE type : heap_types) {
++        struct Padded {
++            D3D12_HEAP_PROPERTIES value;
++            std::uint8_t after[64];
++        } padded;
++        std::memset(&padded, 0xA5, sizeof(padded));
++        console_returns_buffer = get_custom_heap(&padded.value, device.Get(), 1, type) == &padded.value &&
++                                 console_returns_buffer;
++        const D3D12_HEAP_PROPERTIES want = real ? real->GetCustomHeapProperties(1, type) : D3D12_HEAP_PROPERTIES{};
++        console_matches_pc = console_matches_pc && std::memcmp(&padded.value, &want, sizeof(want)) == 0;
++        for (const std::uint8_t byte : padded.after)
++            console_writes_only_struct = console_writes_only_struct && byte == 0xA5;
++    }
++    check(console_returns_buffer, "slot 26 console form returns the buffer's address");
++    check(console_matches_pc, "slot 26 console form writes the PC device's DEFAULT, UPLOAD and READBACK properties");
++    check(console_writes_only_struct, "slot 26 console form writes nothing past the struct");
++    check(rt::d3d12_xs::device_slot_hits(26) == 3, "slot 26 hit counter is 3");
++    check(rt::d3d12_xs::is_device_proxy(device.Get()) && rt::d3d12_xs::device_proxy_real_device(device.Get()) == real,
++          "the proxy is intact after the console-form calls");
++    // A PC C++ call through the proxy (the proxy in RCX, the buffer in RDX) is still forwarded.
++    const D3D12_HEAP_PROPERTIES pc_form = device->GetCustomHeapProperties(1, D3D12_HEAP_TYPE_UPLOAD);
++    const D3D12_HEAP_PROPERTIES pc_want = real ? real->GetCustomHeapProperties(1, D3D12_HEAP_TYPE_UPLOAD)
++                                               : D3D12_HEAP_PROPERTIES{};
++    check(real && std::memcmp(&pc_form, &pc_want, sizeof(pc_want)) == 0 && rt::d3d12_xs::device_slot_hits(26) == 4,
++          "slot 26 PC form still forwards GetCustomHeapProperties");
++
+     // Slot 14: descriptor heap through the proxy. The proxy wraps the real PC heap for the handle ABI.
+     D3D12_DESCRIPTOR_HEAP_DESC heap_desc{};
+     heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+diff --git a/runtime/test/xs_proxy_mock_test.cpp b/runtime/test/xs_proxy_mock_test.cpp
+index f0030116bd..54be08a696 100644
+--- a/runtime/test/xs_proxy_mock_test.cpp
++++ b/runtime/test/xs_proxy_mock_test.cpp
+@@ -7,6 +7,7 @@
+ //   - OpenSharedHandle of a fence (as ID3D12Fence, IUnknown, Fence1), of a non-fence object, of an invalid handle,
+ //     and with a null output or IID, with the references of every object it touches;
+ //   - allocation failures in the proxy (operator new, the arrays it unwraps), injected in this executable only;
++//   - device slot 26 called the console's way (the struct's buffer in RCX, the device in RDX) and the PC way;
+ //   - --fail-virtualalloc / --fail-virtualprotect / --fail-veh: the guard region's setup failing, injected by
+ //     patching this executable's own import table before the first proxy table is built (one process each).
+ // Every device, queue, fence and resource here is a mock that records the calls it gets. No game data, no Xbox DLLs.
+@@ -15,6 +16,8 @@
+ #include <d3d12.h>
+ #include <windows.h>
+ 
++#include <algorithm>
++
+ #include <crtdbg.h>
+ 
+ #include <atomic>
+@@ -75,6 +78,7 @@ enum class Kind { device, queue, fence, resource, allocator, command_list };
+ constexpr unsigned kMockSlots = 128;
+ constexpr std::uint64_t kFenceHandle = 0x1000, kResourceHandle = 0x2000;  // the handles the mock device opens
+ constexpr std::uint64_t kCompletedValue = 7;                            // what a mock fence's slot 8 returns
++constexpr UINT kHeapMarker = 0x26262626;  // the VisibleNodeMask a mock device's slot 26 answers
+ // {5d1e0c4a-2b7f-4e61-9a3d-8c4b2f1e6a70}: an interface the mock queue implements that the proxy does not model.
+ constexpr GUID kExtraIid{0x5d1e0c4a, 0x2b7f, 0x4e61, {0x9a, 0x3d, 0x8c, 0x4b, 0x2f, 0x1e, 0x6a, 0x70}};
+ 
+@@ -181,6 +185,58 @@ void copy_array(Mock* m, unsigned slot, std::uint64_t objects, std::uint64_t cou
+     for (std::uint32_t i = 0; in && i < static_cast<std::uint32_t>(count) && i < 4; ++i) m->array[slot][i] = in[i];
+ }
+ 
++// GetResourceAllocationInfo as a PC driver without console tile padding answers it. A buffer is its width, a texture
++// width x height x slices x element bytes (2 for B5G5R5A1, 4 for RGBA8, 8 for RGBA16F, 16 for RGBA32F; mips are not
++// counted, and one resource is at most 4 GiB, the way a driver caps an allocation), each rounded up to the
++// resource's alignment: 64 KiB, or 4 MiB with more than one sample. A texture with no width is refused. Resources are
++// laid out one after another, each at its own alignment, and the total is rounded up to the largest alignment, as the
++// Vulkan layer's place() does. The struct is written to the hidden return pointer (RDX of a C++ method call), which
++// comes back in RAX. `each` (slot 56) gets every resource's offset, alignment and size.
++std::uint64_t mock_align(std::uint64_t value, std::uint64_t to) {
++    return value > UINT64_MAX - (to - 1) ? UINT64_MAX / to * to : (value + to - 1) / to * to;
++}
++
++D3D12_RESOURCE_ALLOCATION_INFO mock_one_allocation(const D3D12_RESOURCE_DESC& d) {
++    if (d.Width == 0) return {UINT64_MAX, 65536};
++    if (d.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER) return {mock_align(d.Width, 65536), 65536};
++    std::uint64_t element = 4;
++    if (d.Format == DXGI_FORMAT_B5G5R5A1_UNORM) element = 2;
++    if (d.Format == DXGI_FORMAT_R16G16B16A16_FLOAT) element = 8;
++    if (d.Format == DXGI_FORMAT_R32G32B32A32_FLOAT) element = 16;
++    const std::uint64_t samples = d.SampleDesc.Count ? d.SampleDesc.Count : 1;
++    const std::uint64_t alignment = samples > 1 ? 4194304 : 65536;
++    const std::uint64_t bytes = std::min<std::uint64_t>(
++        d.Width * d.Height * d.DepthOrArraySize * element * samples, std::uint64_t{4} << 30);
++    return {mock_align(bytes, alignment), alignment};
++}
++
++D3D12_RESOURCE_DESC g_seen_descs[4];  // the first descriptions the mock device's slot 25 was given
++std::uint32_t g_seen_desc_count = 0;
++std::uint32_t g_seen_calls = 0;  // slot 25 calls since the test cleared it; only the first is recorded
++
++std::uint64_t mock_allocation_info(std::uint64_t ret, std::uint64_t count, std::uint64_t descs_word,
++                                   D3D12_RESOURCE_ALLOCATION_INFO1* each = nullptr) {
++    const auto* descs = reinterpret_cast<const D3D12_RESOURCE_DESC*>(descs_word);
++    if (g_seen_calls++ == 0) {
++        g_seen_desc_count = static_cast<std::uint32_t>(count);
++        for (std::uint32_t i = 0; descs && i < g_seen_desc_count && i < std::size(g_seen_descs); ++i)
++            g_seen_descs[i] = descs[i];
++    }
++    D3D12_RESOURCE_ALLOCATION_INFO total{0, 1};
++    bool refused = false;
++    for (std::uint32_t i = 0; descs && i < static_cast<std::uint32_t>(count); ++i) {
++        const D3D12_RESOURCE_ALLOCATION_INFO one = mock_one_allocation(descs[i]);
++        refused = refused || one.SizeInBytes == UINT64_MAX;
++        const std::uint64_t offset = mock_align(total.SizeInBytes, one.Alignment);
++        if (each) each[i] = {offset, one.Alignment, one.SizeInBytes};
++        total.SizeInBytes = one.SizeInBytes > UINT64_MAX - offset ? UINT64_MAX : offset + one.SizeInBytes;
++        total.Alignment = std::max(total.Alignment, one.Alignment);
++    }
++    auto* out = reinterpret_cast<D3D12_RESOURCE_ALLOCATION_INFO*>(ret);
++    *out = {refused ? UINT64_MAX : mock_align(total.SizeInBytes, total.Alignment), total.Alignment};
++    return ret;
++}
++
+ // `words` are the call's first five words (a1..a5), copied into the thunk's own frame.
+ std::uint64_t mock_call(Mock* m, unsigned slot, const std::uint64_t* words) {
+     const std::uint64_t a1 = words[0], a2 = words[1], a3 = words[2], a4 = words[3];
+@@ -194,8 +250,20 @@ std::uint64_t mock_call(Mock* m, unsigned slot, const std::uint64_t* words) {
+                 if (a1 == kFenceHandle) return static_cast<std::uint32_t>(mock_create(m, Kind::fence, a2, a3));
+                 if (a1 == kResourceHandle) return static_cast<std::uint32_t>(mock_create(m, Kind::resource, a2, a3));
+                 return static_cast<std::uint32_t>(E_INVALIDARG);
++            case 25: return mock_allocation_info(a1, a3, a4);  // GetResourceAllocationInfo (mask a2 is unused)
++            case 56:  // GetResourceAllocationInfo1: (return buffer, mask, count, descs, per-description array)
++                return mock_allocation_info(a1, a3, a4, reinterpret_cast<D3D12_RESOURCE_ALLOCATION_INFO1*>(words[4]));
+             case 34: case 35: case 46: copy_array(m, slot, a2, a1); break;  // (count, objects, ...)
+             case 45: copy_array(m, slot, a1, a3); break;                    // (fences, values, count, ...)
++            case 26: {  // GetCustomHeapProperties, the PC method: (return buffer, node mask, heap type)
++                auto* out = reinterpret_cast<D3D12_HEAP_PROPERTIES*>(a1);
++                if (!out) break;
++                *out = {};
++                out->Type = static_cast<D3D12_HEAP_TYPE>(static_cast<std::uint32_t>(a3));
++                out->CreationNodeMask = static_cast<UINT>(a2);
++                out->VisibleNodeMask = kHeapMarker;
++                return a1;  // a struct-returning method hands the buffer's address back in RAX
++            }
+             case 50: copy_array(m, slot, a3, a2); break;                    // (flags, count, objects, fence, value)
+             default: break;
+         }
+@@ -687,6 +755,321 @@ int check_allocators() {
+     return 0;
+ }
+ 
++// ---- 10. Device slot 25, GetResourceAllocationInfo: a render target takes whole console tiles ----
++
++D3D12_RESOURCE_DESC target_desc(std::uint64_t width, UINT height, DXGI_FORMAT format, UINT slices = 1) {
++    D3D12_RESOURCE_DESC d{};
++    d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++    d.Width = width;
++    d.Height = height;
++    d.DepthOrArraySize = static_cast<UINT16>(slices);
++    d.MipLevels = 1;
++    d.Format = format;
++    d.SampleDesc.Count = 1;
++    d.Layout = static_cast<D3D12_TEXTURE_LAYOUT>(0x101);  // the Xbox tiled layout word
++    d.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
++    return d;
++}
++
++int check_render_target_sizes() {
++    Mock* mock = nullptr;
++    void* device = make_device(mock, 0, true);
++    EXPECT(device);
++    void* const* vtable = *reinterpret_cast<void* const* const*>(device);
++    // The retail executable's call: the buffer for the struct in RCX, the device in RDX.
++    using ConsoleFn = D3D12_RESOURCE_ALLOCATION_INFO*(WINAPI*)(D3D12_RESOURCE_ALLOCATION_INFO*, void*, UINT, UINT,
++                                                               const D3D12_RESOURCE_DESC*);
++    const auto get_info = reinterpret_cast<ConsoleFn>(vtable[25]);
++    auto ask = [&](const D3D12_RESOURCE_DESC* descs, UINT count) {
++        D3D12_RESOURCE_ALLOCATION_INFO info{0xDEAD, 0xBEEF};
++        const bool same_buffer = get_info(&info, device, 0, count, descs) == &info;
++        if (!same_buffer) info.SizeInBytes = 0;
++        return info;
++    };
++
++    // A 1920 x 1080 RGBA8 target. A 4-byte element tile is 128 x 128 pixels: 15 tiles across, 9 down (1080 / 128 is
++    // 8.4), 135 x 64 KiB = 8,847,360 B. The PC device packs it as 8,294,400 B, 8,323,072 B rounded to 64 KiB.
++    const D3D12_RESOURCE_DESC hd = target_desc(1920, 1080, DXGI_FORMAT_R8G8B8A8_UNORM);
++    D3D12_RESOURCE_ALLOCATION_INFO info = ask(&hd, 1);
++    EXPECT(info.SizeInBytes == 8847360 && info.Alignment == 65536);
++    // A 3840 x 2160 RGBA16F target: an 8-byte element tile is 128 x 64, 30 across and 34 down (2160 / 64 is 33.75),
++    // 1020 tiles = 66,846,720 B, where the PC device says 66,387,968 B.
++    const D3D12_RESOURCE_DESC uhd = target_desc(3840, 2160, DXGI_FORMAT_R16G16B16A16_FLOAT);
++    EXPECT(ask(&uhd, 1).SizeInBytes == 66846720);
++    // Both in one call: the sum of the two console sizes.
++    const D3D12_RESOURCE_DESC both[] = {hd, uhd};
++    EXPECT(ask(both, 2).SizeInBytes == 8847360 + 66846720);
++    // Two slices take two surfaces.
++    const D3D12_RESOURCE_DESC two = target_desc(1920, 1080, DXGI_FORMAT_R8G8B8A8_UNORM, 2);
++    EXPECT(ask(&two, 1).SizeInBytes == 2 * 8847360);
++
++    // What is left alone: a texture that is not a render target, a buffer, a render target of a format the rule does
++    // not list, one the PC device refuses, and a surface that is already whole tiles (1024 x 1024 RGBA8).
++    D3D12_RESOURCE_DESC sampled = hd;
++    sampled.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
++    EXPECT(ask(&sampled, 1).SizeInBytes == 8323072);
++    D3D12_RESOURCE_DESC buffer{};
++    buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++    buffer.Width = 100000;
++    buffer.Height = 1;
++    buffer.DepthOrArraySize = 1;
++    buffer.MipLevels = 1;
++    buffer.SampleDesc.Count = 1;
++    buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++    buffer.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++    EXPECT(ask(&buffer, 1).SizeInBytes == 131072);
++    D3D12_RESOURCE_DESC odd_format = hd;
++    odd_format.Format = DXGI_FORMAT_BC1_UNORM;
++    EXPECT(ask(&odd_format, 1).SizeInBytes == 8323072);
++    D3D12_RESOURCE_DESC empty = hd;
++    empty.Width = 0;
++    EXPECT(ask(&empty, 1).SizeInBytes == UINT64_MAX);
++    const D3D12_RESOURCE_DESC exact = target_desc(1024, 1024, DXGI_FORMAT_R8G8B8A8_UNORM);
++    EXPECT(ask(&exact, 1).SizeInBytes == 4194304);
++    // A refused description in a list refuses the list, as before.
++    const D3D12_RESOURCE_DESC refused[] = {hd, empty};
++    EXPECT(ask(refused, 2).SizeInBytes == UINT64_MAX);
++    // A mip chain: 1920 x 1080 with 3 mips is mip 0 in 135 tiles, mip 1 (960 x 540) in 8 x 5 = 40 tiles and mip 2
++    // (480 x 270) in 4 x 3 = 12 tiles.
++    D3D12_RESOURCE_DESC mips = hd;
++    mips.MipLevels = 3;
++    EXPECT(ask(&mips, 1).SizeInBytes == (135 + 40 + 12) * 65536ull);
++
++    // The PC form (this in RCX, the buffer in RDX) answers the same sizes.
++    D3D12_RESOURCE_ALLOCATION_INFO pc{};
++    EXPECT(raw(device, 25, word(&pc), 0, 1, word(&hd)) == word(&pc));
++    EXPECT(pc.SizeInBytes == 8847360);
++
++    EXPECT(release(device) == 0 && mock->refs == 0);
++    std::printf("%s: device slot 25 pads render targets to whole console tiles and leaves the other sizes as the PC "
++                "device gives them\n", g_label);
++    return 0;
++}
++
++// ---- 7b. Device slot 25 hands the PC device clean descriptions and leaves the title's array alone ----
++
++int check_allocation_descriptions_cleaned() {
++    constexpr std::uint32_t kXboxTiledLayout = 0x101, kXboxRowMajorLayout = 0x1, kXboxFlagBits = 0x40000 | 0x20000;
++    constexpr D3D12_RESOURCE_FLAGS kPcFlags =
++        D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
++    Mock* mock = nullptr;
++    void* device = make_device(mock, 0, true);
++    EXPECT(device);
++    void* const* vtable = *reinterpret_cast<void* const* const*>(device);
++    using ConsoleFn = D3D12_RESOURCE_ALLOCATION_INFO*(WINAPI*)(D3D12_RESOURCE_ALLOCATION_INFO*, void*, UINT, UINT,
++                                                               const D3D12_RESOURCE_DESC*);
++    const auto get_info = reinterpret_cast<ConsoleFn>(vtable[25]);
++
++    // A texture with the Xbox tiled layout word and Xbox bits above the PC flags, and a buffer with the row-major word.
++    D3D12_RESOURCE_DESC titles[2] = {target_desc(1920, 1080, DXGI_FORMAT_R8G8B8A8_UNORM), {}};
++    titles[0].Flags = static_cast<D3D12_RESOURCE_FLAGS>(kPcFlags | kXboxFlagBits);
++    titles[0].Layout = static_cast<D3D12_TEXTURE_LAYOUT>(kXboxTiledLayout);
++    titles[1].Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++    titles[1].Width = 100000;
++    titles[1].Height = 1;
++    titles[1].DepthOrArraySize = 1;
++    titles[1].MipLevels = 1;
++    titles[1].SampleDesc.Count = 1;
++    titles[1].Layout = static_cast<D3D12_TEXTURE_LAYOUT>(kXboxRowMajorLayout);
++    titles[1].Flags = static_cast<D3D12_RESOURCE_FLAGS>(kXboxFlagBits);
++    D3D12_RESOURCE_DESC kept[2];
++    std::memcpy(kept, titles, sizeof(kept));
++
++    D3D12_RESOURCE_ALLOCATION_INFO info{};
++    g_seen_desc_count = 0;
++    g_seen_calls = 0;
++    std::memset(g_seen_descs, 0xCC, sizeof(g_seen_descs));
++    EXPECT(get_info(&info, device, 0, 2, titles) == &info);
++    // The PC device saw both descriptions with PC flags and a PC layout, the rest of each as the title wrote it.
++    EXPECT(g_seen_desc_count == 2);
++    EXPECT(g_seen_descs[0].Layout == D3D12_TEXTURE_LAYOUT_UNKNOWN && g_seen_descs[0].Flags == kPcFlags);
++    EXPECT(g_seen_descs[0].Width == 1920 && g_seen_descs[0].Height == 1080 &&
++           g_seen_descs[0].Format == DXGI_FORMAT_R8G8B8A8_UNORM);
++    EXPECT(g_seen_descs[1].Layout == D3D12_TEXTURE_LAYOUT_ROW_MAJOR && g_seen_descs[1].Flags == D3D12_RESOURCE_FLAG_NONE);
++    EXPECT(g_seen_descs[1].Width == 100000);
++    // The title's array is as it was, and the size still follows the render-target flag it kept (the proxy's later
++    // per-target questions to the PC device are not recorded).
++    EXPECT(std::memcmp(kept, titles, sizeof(kept)) == 0);
++    EXPECT(info.SizeInBytes == 8847360 + 131072);
++
++    const D3D12_TEXTURE_LAYOUT normalized_layouts[] = {
++        static_cast<D3D12_TEXTURE_LAYOUT>(kXboxTiledLayout),
++        static_cast<D3D12_TEXTURE_LAYOUT>(0x102),
++        static_cast<D3D12_TEXTURE_LAYOUT>(0x105),
++        D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE,
++    };
++    for (const auto layout : normalized_layouts) {
++        D3D12_RESOURCE_DESC descs[] = {titles[0], titles[1]};
++        descs[0].Layout = descs[1].Layout = layout;
++        g_seen_calls = 0;
++        EXPECT(get_info(&info, device, 0, 2, descs) == &info);
++        EXPECT(g_seen_desc_count == 2);
++        EXPECT(g_seen_descs[0].Layout == D3D12_TEXTURE_LAYOUT_UNKNOWN);
++        EXPECT(g_seen_descs[1].Layout == D3D12_TEXTURE_LAYOUT_ROW_MAJOR);
++    }
++
++    const D3D12_TEXTURE_LAYOUT preserved_layouts[] = {
++        D3D12_TEXTURE_LAYOUT_UNKNOWN,
++        D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
++        D3D12_TEXTURE_LAYOUT_64KB_STANDARD_SWIZZLE,
++    };
++    for (const auto layout : preserved_layouts) {
++        D3D12_RESOURCE_DESC descs[] = {titles[0], titles[1]};
++        descs[0].Layout = descs[1].Layout = layout;
++        g_seen_calls = 0;
++        EXPECT(get_info(&info, device, 0, 2, descs) == &info);
++        EXPECT(g_seen_desc_count == 2);
++        EXPECT(g_seen_descs[0].Layout == layout && g_seen_descs[1].Layout == layout);
++    }
++
++    constexpr auto kUav = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
++    constexpr auto kDepthStencil = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
++    constexpr auto kRenderTarget = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++    D3D12_RESOURCE_DESC formats[] = {
++        target_desc(64, 64, DXGI_FORMAT_B5G5R5A1_UNORM),
++        target_desc(64, 64, DXGI_FORMAT_R32G8X24_TYPELESS),
++        target_desc(64, 64, DXGI_FORMAT_R8G8B8A8_UNORM),
++        target_desc(64, 64, DXGI_FORMAT_R32_FLOAT),
++    };
++    formats[0].Flags = kPcFlags;
++    formats[1].Flags = kDepthStencil | kUav;
++    formats[2].Flags = kPcFlags;
++    formats[3].Flags = kUav;
++    g_seen_calls = 0;
++    EXPECT(get_info(&info, device, 0, 4, formats) == &info);
++    EXPECT(g_seen_desc_count == 4);
++    EXPECT(g_seen_descs[0].Flags == kRenderTarget);
++    EXPECT(g_seen_descs[1].Flags == kDepthStencil);
++    EXPECT(g_seen_descs[2].Flags == kPcFlags);
++    EXPECT(g_seen_descs[3].Flags == kUav);
++
++    // PC calls must keep their layout and flags so the host can reject an invalid descriptor.
++    using PcFn = D3D12_RESOURCE_ALLOCATION_INFO*(WINAPI*)(void*, D3D12_RESOURCE_ALLOCATION_INFO*, UINT, UINT,
++                                                          const D3D12_RESOURCE_DESC*);
++    const auto get_pc_info = reinterpret_cast<PcFn>(vtable[25]);
++    D3D12_RESOURCE_DESC pc_buffer = titles[1];
++    pc_buffer.Layout = D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE;
++    pc_buffer.Flags = static_cast<D3D12_RESOURCE_FLAGS>(0x1000);
++    g_seen_calls = 0;
++    EXPECT(get_pc_info(device, &info, 0, 1, &pc_buffer) == &info);
++    EXPECT(g_seen_desc_count == 1 && g_seen_descs[0].Layout == D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE);
++    EXPECT(g_seen_descs[0].Flags == pc_buffer.Flags);
++
++    // A null array with a zero count reaches the PC device as it came.
++    g_seen_desc_count = 99;
++    g_seen_calls = 0;
++    EXPECT(get_info(&info, device, 0, 0, nullptr) == &info && g_seen_calls == 1 && g_seen_desc_count == 0);
++
++    EXPECT(release(device) == 0 && mock->refs == 0);
++    std::printf("%s: device slot 25 gives the PC device descriptions with PC flags and layout, and the title's own "
++                "array is not written\n", g_label);
++    return 0;
++}
++
++// ---- 11. Console render target layout: alignment, per-description offsets, mips, formats, overflow ----
++
++int check_render_target_layout() {
++    Mock* mock = nullptr;
++    void* device = make_device(mock, 9, true);
++    EXPECT(device);
++    void* const* vtable = *reinterpret_cast<void* const* const*>(device);
++    // The retail executable's calls: the buffer for the struct in RCX, the device in RDX.
++    using InfoFn = D3D12_RESOURCE_ALLOCATION_INFO*(WINAPI*)(D3D12_RESOURCE_ALLOCATION_INFO*, void*, UINT, UINT,
++                                                            const D3D12_RESOURCE_DESC*);
++    using Info1Fn = D3D12_RESOURCE_ALLOCATION_INFO*(WINAPI*)(D3D12_RESOURCE_ALLOCATION_INFO*, void*, UINT, UINT,
++                                                             const D3D12_RESOURCE_DESC*,
++                                                             D3D12_RESOURCE_ALLOCATION_INFO1*);
++    const auto get_info = reinterpret_cast<InfoFn>(vtable[25]);
++    const auto get_info1 = reinterpret_cast<Info1Fn>(vtable[56]);
++    auto ask = [&](const D3D12_RESOURCE_DESC* descs, UINT count) {
++        D3D12_RESOURCE_ALLOCATION_INFO info{0xDEAD, 0xBEEF};
++        if (get_info(&info, device, 0, count, descs) != &info) info = {0, 0};
++        return info;
++    };
++    auto ask_one = [&](const D3D12_RESOURCE_DESC& d) { return ask(&d, 1); };
++    auto target = [](std::uint64_t w, UINT h, DXGI_FORMAT f, UINT slices, UINT mips) {
++        D3D12_RESOURCE_DESC d = target_desc(w, h, f, slices);
++        d.MipLevels = static_cast<UINT16>(mips);
++        return d;
++    };
++
++    // A four-sample 1 x 1 target is 4 MiB at 4 MiB alignment. Next to a 1080p target that grows to 8,847,360 B, the
++    // two need 4 MiB + 8,847,360 B = 13,041,664 B placed, and the total is a whole number of 4 MiB: 16 MiB, in
++    // either order. (The PC device says 12 MiB for them; adding the 512 KiB the padding takes would say 12.5 MiB.)
++    const D3D12_RESOURCE_DESC hd = target_desc(1920, 1080, DXGI_FORMAT_R8G8B8A8_UNORM);
++    D3D12_RESOURCE_DESC msaa = target_desc(1, 1, DXGI_FORMAT_R8G8B8A8_UNORM);
++    msaa.SampleDesc.Count = 4;
++    const D3D12_RESOURCE_DESC msaa_first[] = {msaa, hd};
++    const D3D12_RESOURCE_DESC msaa_last[] = {hd, msaa};
++    D3D12_RESOURCE_ALLOCATION_INFO info = ask(msaa_first, 2);
++    EXPECT(info.SizeInBytes == 16777216 && info.Alignment == 4194304);
++    info = ask(msaa_last, 2);
++    EXPECT(info.SizeInBytes == 16777216 && info.Alignment == 4194304);
++    EXPECT(ask(&msaa, 1).SizeInBytes == 4194304);  // multisampled targets are left as the PC device sizes them
++
++    // GetResourceAllocationInfo1: the offsets follow the padded sizes, in the console form and the PC form.
++    const D3D12_RESOURCE_DESC two[] = {hd, hd};
++    D3D12_RESOURCE_ALLOCATION_INFO1 each[2]{};
++    D3D12_RESOURCE_ALLOCATION_INFO total{};
++    EXPECT(get_info1(&total, device, 0, 2, two, each) == &total);
++    EXPECT(total.SizeInBytes == 17694720 && total.Alignment == 65536);
++    EXPECT(each[0].Offset == 0 && each[0].SizeInBytes == 8847360 && each[0].Alignment == 65536);
++    EXPECT(each[1].Offset == 8847360 && each[1].SizeInBytes == 8847360 && each[1].Alignment == 65536);
++    // The per-description array is optional: without one the total is the same 17,694,720 B.
++    D3D12_RESOURCE_ALLOCATION_INFO no_array{};
++    EXPECT(get_info1(&no_array, device, 0, 2, two, nullptr) == &no_array);
++    EXPECT(no_array.SizeInBytes == 17694720 && no_array.Alignment == 65536);
++    D3D12_RESOURCE_ALLOCATION_INFO1 mixed[2]{};
++    D3D12_RESOURCE_ALLOCATION_INFO pc{};
++    EXPECT(raw(device, 56, word(&pc), 0, 2, word(msaa_first), word(mixed)) == word(&pc));
++    EXPECT(pc.SizeInBytes == 16777216 && pc.Alignment == 4194304);
++    EXPECT(mixed[0].Offset == 0 && mixed[0].SizeInBytes == 4194304 && mixed[0].Alignment == 4194304);
++    EXPECT(mixed[1].Offset == 4194304 && mixed[1].SizeInBytes == 8847360 && mixed[1].Alignment == 65536);
++    // Nothing to pad: the PC device's answer stands, per-description array included.
++    D3D12_RESOURCE_DESC buffer{};
++    buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++    buffer.Width = 100000;
++    buffer.Height = 1;
++    buffer.DepthOrArraySize = 1;
++    buffer.MipLevels = 1;
++    buffer.SampleDesc.Count = 1;
++    buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++    const D3D12_RESOURCE_DESC buffers[] = {buffer, buffer};
++    D3D12_RESOURCE_ALLOCATION_INFO1 plain[2]{};
++    EXPECT(get_info1(&total, device, 0, 2, buffers, plain) == &total);
++    EXPECT(total.SizeInBytes == 262144 && plain[1].Offset == 131072 && plain[1].SizeInBytes == 131072);
++
++    // Mips: 0 is the full chain. 256 x 128 RGBA8 takes two tiles for mip 0, one for mip 1 (128 x 64 is wider than half a
++    // tile) and one tail tile for the rest.
++    EXPECT(ask_one(target(256, 128, DXGI_FORMAT_R8G8B8A8_UNORM, 1, 0)).SizeInBytes ==
++           4 * 65536ull);
++    // 128 x 32 with two mips and two slices: mip 0 is a whole tile, mip 1 (64 x 16) is the tail tile, per slice.
++    EXPECT(ask_one(target(128, 32, DXGI_FORMAT_R8G8B8A8_UNORM, 2, 2)).SizeInBytes ==
++           4 * 65536ull);
++    // 257 x 32 with two mips: mip 0 is 3 tiles across, mip 1 is 129 x 16 (an odd extent rounds up): 2 tiles.
++    EXPECT(ask_one(target(257, 32, DXGI_FORMAT_R8G8B8A8_UNORM, 1, 2)).SizeInBytes ==
++           5 * 65536ull);
++    // 2-byte B5G5R5A1 is a 256 x 128 tile: 257 x 64 takes two.
++    EXPECT(ask_one(target(257, 64, DXGI_FORMAT_B5G5R5A1_UNORM, 1, 1)).SizeInBytes ==
++           2 * 65536ull);
++    // 16-byte RGBA32F is a 64 x 64 tile: 65 x 32 takes two.
++    EXPECT(ask_one(target(65, 32, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 1)).SizeInBytes ==
++           2 * 65536ull);
++
++    // Sums saturate where the PC device's do. A 2^26 x 2^26 RGBA32F target of 200 slices is 200 x 2^56 B (the PC mock
++    // caps it at 4 GiB); two of them are past 2^64.
++    const D3D12_RESOURCE_DESC huge = target(1ull << 26, 1u << 26, DXGI_FORMAT_R32G32B32A32_FLOAT, 200, 1);
++    EXPECT(ask(&huge, 1).SizeInBytes == 200ull << 56);
++    const D3D12_RESOURCE_DESC huge_two[] = {huge, huge};
++    info = ask(huge_two, 2);
++    EXPECT(info.SizeInBytes == 0xFFFFFFFFFFFF0000ull && info.Alignment == 65536);
++
++    EXPECT(release(device) == 0 && mock->refs == 0);
++    std::printf("%s: render targets are laid out at their own alignments, with per-description offsets, mip chains "
++                "and saturating sums\n", g_label);
++    return 0;
++}
++
+ // ---- 7. Xbox device slots from the public HLE (48, 73, 78, 79, 80) ----
+ //
+ // A device that answers ID3D12Device11 (80 PC slots) is the Vulkan layer's shape: slots 78/79 are inside its table
+@@ -821,7 +1204,51 @@ int run_env_slots(bool valid) {
+     return 0;
+ }
+ 
+-// ---- 9. The refused tail and the guard region ----
++// ---- 9. Device slot 26, GetCustomHeapProperties, the console's way and the PC's ----
++
++int check_custom_heap_properties() {
++    Mock* mock = nullptr;
++    void* device = make_device(mock, 0, true);
++    EXPECT(device && xs::device_slot_overridden(26));
++    void* const* vtable = *reinterpret_cast<void* const* const*>(device);
++
++    // The retail executable's call: the buffer for the struct in RCX, the device in RDX, node mask and heap type in
++    // R8 and R9 (their upper halves are not the callee's to read). The buffer sits inside a pattern that must stay.
++    struct Padded {
++        std::uint8_t before[16];
++        D3D12_HEAP_PROPERTIES value;
++        std::uint8_t after[64];
++    } padded;
++    std::memset(&padded, 0xA5, sizeof(padded));
++    using ConsoleFn = std::uint64_t(WINAPI*)(void*, void*, std::uint64_t, std::uint64_t);
++    const std::uint64_t returned = reinterpret_cast<ConsoleFn>(vtable[26])(
++        &padded.value, device, 0xdeadbeef00000001ull, 0xdeadbeef00000002ull);
++    EXPECT(returned == word(&padded.value));
++    // The PC method got (buffer, node mask, heap type) once, on the device behind the proxy.
++    EXPECT(mock->calls[26] == 1);
++    EXPECT(static_cast<std::uint32_t>(mock->args[26][1]) == 1 && static_cast<std::uint32_t>(mock->args[26][2]) == 2);
++    EXPECT(padded.value.Type == D3D12_HEAP_TYPE_UPLOAD && padded.value.CreationNodeMask == 1 &&
++           padded.value.VisibleNodeMask == kHeapMarker);
++    for (const std::uint8_t byte : padded.before) EXPECT(byte == 0xA5);
++    for (const std::uint8_t byte : padded.after) EXPECT(byte == 0xA5);
++    // The proxy is what it was: main's forwarder took the buffer for the proxy, and a thunk that took the proxy
++    // for the buffer would write the struct over it.
++    EXPECT(xs::is_device_proxy(device) && word(xs::device_proxy_real_device(device)) == word(mock) &&
++           xs::device_proxy_slot_count(device) == 44 && xs::device_proxy_ref_count(device) == 1);
++
++    // A PC C++ caller: the proxy in RCX and its buffer in RDX. That call is forwarded as it is.
++    D3D12_HEAP_PROPERTIES pc{};
++    EXPECT(raw(device, 26, word(&pc), 1, 3) == word(&pc));
++    EXPECT(mock->calls[26] == 2 && mock->args[26][0] == word(&pc));
++    EXPECT(pc.Type == D3D12_HEAP_TYPE_READBACK && pc.CreationNodeMask == 1 && pc.VisibleNodeMask == kHeapMarker);
++
++    EXPECT(release(device) == 0 && mock->refs == 0);
++    std::printf("%s: device slot 26 with the buffer in RCX and the device in RDX reaches the PC method and writes "
++                "only the struct; the PC form is forwarded unchanged\n", g_label);
++    return 0;
++}
++
++// ---- 10. The refused tail and the guard region ----
+ 
+ int check_tail(bool want_guarded) {
+     Mock* mock = nullptr;
+@@ -948,7 +1375,8 @@ int main(int argc, char** argv) {
+     }
+     if (argc != 1) return 2;
+     if (check_tail(true) || check_levels() || check_fence1() || check_create_failures() || check_open_shared() ||
+-        check_alloc_failures() || check_allocators() || check_xbox_slots())
++        check_alloc_failures() || check_allocators() || check_render_target_sizes() || check_allocation_descriptions_cleaned() ||
++        check_render_target_layout() || check_xbox_slots() || check_custom_heap_properties())
+         return 1;
+     std::printf("xs_proxy_mock_test: PASS (%d allocations refused on purpose)\n", g_failed_news);
+     return 0;

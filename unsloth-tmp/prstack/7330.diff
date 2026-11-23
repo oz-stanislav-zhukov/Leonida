@@ -1,0 +1,97 @@
+diff --git a/runtime/shims/d3d12_com.cpp b/runtime/shims/d3d12_com.cpp
+index 4dd766b316..f31aac716d 100644
+--- a/runtime/shims/d3d12_com.cpp
++++ b/runtime/shims/d3d12_com.cpp
+@@ -775,6 +775,15 @@ class GraphicsCommandList final
+         } else if (count_buffer_offset != 0) {
+             return check(false);
+         }
++        if (kind == leonida::IndirectKind::dispatch_mesh) {
++            // Not replayed yet (#3777 replays it as vkCmdDrawMeshTasksIndirectEXT): nothing is recorded, and the
++            // first such call says so. The list stays valid.
++            static std::atomic<bool> logged{false};
++            if (!logged.exchange(true, std::memory_order_relaxed))
++                std::fprintf(stderr, "[rt] d3d12: ExecuteIndirect with a DISPATCH_MESH signature is not replayed yet; "
++                                     "nothing was recorded\n");
++            return;
++        }
+         if (max_command_count) {
+             const UINT64 record_size =
+                 kind == leonida::IndirectKind::draw ? sizeof(D3D12_DRAW_ARGUMENTS)
+diff --git a/runtime/shims/d3d12_vulkan_device.cpp b/runtime/shims/d3d12_vulkan_device.cpp
+index c7e3d99942..82ff3826c1 100644
+--- a/runtime/shims/d3d12_vulkan_device.cpp
++++ b/runtime/shims/d3d12_vulkan_device.cpp
+@@ -5536,6 +5536,11 @@ class Device final
+         case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW: kind = leonida::IndirectKind::draw; break;
+         case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED: kind = leonida::IndirectKind::draw_indexed; break;
+         case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH: kind = leonida::IndirectKind::dispatch; break;
++        case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH:
++            // As DispatchMesh: only a device with mesh shaders (MeshShaderTier 1) takes it.
++            if (!state_.info.mesh_shader) return E_NOTIMPL;
++            kind = leonida::IndirectKind::dispatch_mesh;
++            break;
+         default: return E_NOTIMPL;
+         }
+         return create_command_signature(kind, desc->ByteStride, riid, out, identity());
+diff --git a/runtime/src/command_list.h b/runtime/src/command_list.h
+index 4b384bdc16..cc198aa8e3 100644
+--- a/runtime/src/command_list.h
++++ b/runtime/src/command_list.h
+@@ -586,6 +586,9 @@ enum class IndirectKind : std::uint8_t {
+     draw = 0,
+     draw_indexed = 1,
+     dispatch = 2,
++    // D3D12_DISPATCH_MESH_ARGUMENTS. Created on a device with mesh shaders; ExecuteIndirect with it records nothing
++    // yet (the replay is #3777's), so a title that only creates such a signature at startup goes on.
++    dispatch_mesh = 3,
+ };
+ 
+ struct ExecuteIndirect {
+diff --git a/runtime/test/d3d12_mesh_test.cpp b/runtime/test/d3d12_mesh_test.cpp
+index df430c11a6..590d3507b9 100644
+--- a/runtime/test/d3d12_mesh_test.cpp
++++ b/runtime/test/d3d12_mesh_test.cpp
+@@ -12,6 +12,8 @@
+ //     bottom-left quadrant (yellow). Each pixel is read back and compared.
+ //   - A vertex draw with the mesh PSO, and DispatchMesh with the VS one, fail at execution (ReplayResult::
+ //     invalid_draw); a mesh grid beyond D3D12's limits fails at Close; an empty grid records nothing.
++//   - A DISPATCH_MESH command signature is created only with the extension; ExecuteIndirect with it records nothing
++//     yet, so its list closes.
+ // The shaders are GLSL written to the translator's contract (test/glsl/ms_draw.mesh, ps_draw.frag, vs_fullscreen.vert).
+ // No game data. Set LEONIDA_VK_VALIDATION=1 to run under VK_LAYER_KHRONOS_validation.
+ #include "vk_test_device.h"
+@@ -180,6 +182,11 @@ int main() {
+         stream.add(TargetsSubobject{.inner = one_target()});
+         Ref<ID3D12PipelineState> pso;
+         EXPECT(create(device.p, stream, pso) == E_NOTIMPL && !pso.p);
++        // A DISPATCH_MESH command signature is refused the same way.
++        const D3D12_INDIRECT_ARGUMENT_DESC mesh_arg{D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH};
++        const D3D12_COMMAND_SIGNATURE_DESC mesh_sig{12, 1, &mesh_arg, 0};
++        Ref<ID3D12CommandSignature> sig;
++        EXPECT(device->CreateCommandSignature(&mesh_sig, nullptr, IID_PPV_ARGS(&sig.p)) == E_NOTIMPL && !sig.p);
+         root.reset();
+         EXPECT(rt::d3d12_xs::device_proxy_ref_count(device.p) == 1);
+     }
+@@ -398,6 +405,21 @@ int main() {
+         list->RSSetViewports(1, &viewport);
+         list6->DispatchMesh(4096, 1025, 1);
+         EXPECT(list->Close() == E_INVALIDARG);
++        // A DISPATCH_MESH command signature (D3D12_DISPATCH_MESH_ARGUMENTS, 12 bytes) is created; a stride below its
++        // 12 bytes is refused as the PC runtime refuses it. ExecuteIndirect with it records nothing yet (#3777 replays
++        // it), so the list still closes.
++        {
++            const D3D12_INDIRECT_ARGUMENT_DESC mesh_arg{D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH};
++            const D3D12_COMMAND_SIGNATURE_DESC mesh_sig{12, 1, &mesh_arg, 0};
++            const D3D12_COMMAND_SIGNATURE_DESC short_sig{8, 1, &mesh_arg, 0};
++            Ref<ID3D12CommandSignature> sig, short_one;
++            EXPECT(SUCCEEDED(device->CreateCommandSignature(&mesh_sig, nullptr, IID_PPV_ARGS(&sig.p))) && sig.p);
++            EXPECT(device->CreateCommandSignature(&short_sig, nullptr, IID_PPV_ARGS(&short_one.p)) == E_INVALIDARG);
++            EXPECT(SUCCEEDED(list->Reset(allocator.p, mesh_pso.p)));
++            list->SetGraphicsRootSignature(root.p);
++            list->ExecuteIndirect(sig.p, 1, upload.p, 0, nullptr, 0);
++            EXPECT(list->Close() == S_OK);
++        }
+         EXPECT(SUCCEEDED(queue->Signal(fence.p, 2)) && SUCCEEDED(fence->SetEventOnCompletion(2, nullptr)));
+ 
+         // D3D-291: pipeline statistics around mesh draws. Query 0 holds a vertex draw, two mesh draws and another

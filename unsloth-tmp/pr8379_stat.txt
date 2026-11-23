@@ -1,0 +1,14 @@
+ runtime/CMakeLists.txt                     |  64 ++++
+ runtime/README.md                          |  34 +-
+ runtime/shims/startup_trace.h              |  15 +-
+ runtime/src/main.cpp                       |  24 ++
+ runtime/src/pe_loader.cpp                  | 455 ++++++++++++++++++----
+ runtime/src/pe_loader.h                    |  14 +-
+ runtime/src/tls_host.cpp                   |  13 +
+ runtime/test/check_tls_clone_cleanup.cmake |  40 ++
+ runtime/test/check_tls_index0.cmake        |  52 +++
+ runtime/test/fixtures/tiny_thread_hook.cpp |  16 +
+ runtime/test/fixtures/tiny_tls_clones.cpp  |  13 +
+ runtime/test/fixtures/tiny_tls_ga.cpp      |  35 ++
+ runtime/test/loader_tls_index0_test.cpp    | 580 +++++++++++++++++++++++++++++
+ 13 files changed, 1278 insertions(+), 77 deletions(-)

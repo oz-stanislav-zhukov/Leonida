@@ -1,0 +1,470 @@
+diff --git a/docs/d3d12_vulkan.md b/docs/d3d12_vulkan.md
+index 33b52d422f..8af3d921c8 100644
+--- a/docs/d3d12_vulkan.md
++++ b/docs/d3d12_vulkan.md
+@@ -90,7 +90,13 @@ enough for the bundled middleware's `d3d12_xs` calls, not for the game. The laye
+   desktop order, but also an extra texture-creation method at slot 76, a `CreateComputePipelineState` call at
+   slot 62 where the PC interface it forwarded to presents `CreateStateObject` (different arity), and descriptor-heap
+   start handles returned in RAX at heap slots 9/10. Implement the public chain plus those measured overrides
+-  explicitly; do not assume every slot. Device 11 adds `CreateSampler2`; command list 8 adds
++  explicitly; do not assume every slot. On the retail executable's higher device slots (`runtime/shims/d3d12_xs_device.cpp`),
++  slot 86 routes `CreatePipelineState(desc, riid, out)` to PC slot 47 (`ID3D12Device2::CreatePipelineState`),
++  slot 101 routes `CreateStateObject(desc, riid, out)` to PC slot 62 (`ID3D12Device5::CreateStateObject`), and
++  slot 108 routes `GetResourceAllocationInfo2` (accepting the console C-ABI struct return with the return buffer in
++  `RCX` and the device in `RDX`, expanding 56-byte `D3D12_RESOURCE_DESC` entries to `D3D12_RESOURCE_DESC1` and
++  normalizing Xbox layout words and flag bits on the copy) to PC
++  slot 68 (`ID3D12Device8::GetResourceAllocationInfo2`). Device 11 adds `CreateSampler2`; command list 8 adds
+   `OMSetFrontAndBackStencilRef` (public SDK).
+ - **Unknown IIDs and slots.** `QueryInterface` must log the IID and return `E_NOINTERFACE` if it is not in the
+   public chain. If the game then fails, the IID and the call site identify the Xbox-specific interface to reverse.
+diff --git a/runtime/shims/d3d12_xs_device.cpp b/runtime/shims/d3d12_xs_device.cpp
+index e17a80353b..dc1dd13e56 100644
+--- a/runtime/shims/d3d12_xs_device.cpp
++++ b/runtime/shims/d3d12_xs_device.cpp
+@@ -147,6 +147,9 @@ const char* slot_name(unsigned slot) {
+         case 78: return "Xbox SetFrameIntervalX";
+         case 79: return "Xbox ScheduleFrameEventX";
+         case 80: return "Xbox WaitFrameEventX";
++        case 86: return "Xbox CreatePipelineState -> PC CreatePipelineState (slot 47)";
++        case 101: return "Xbox CreateStateObject -> PC CreateStateObject (slot 62)";
++        case 108: return "Xbox GetResourceAllocationInfo2 -> PC GetResourceAllocationInfo2 (slot 68)";
+         default: return "forwarded";
+     }
+ }
+@@ -1480,6 +1483,98 @@ HRESULT proxy_create_resource(DeviceProxy* self, const D3D12_HEAP_PROPERTIES* he
+                                                *riid, out);
+ }
+ 
++// Xbox slot 86: CreatePipelineState(desc, riid, out), forwarded to PC ID3D12Device2::CreatePipelineState (PC slot 47).
++HRESULT proxy_create_pipeline_state(DeviceProxy* self, const D3D12_PIPELINE_STATE_STREAM_DESC* desc, const IID* riid,
++                                    void** out) {
++    note_slot(86);
++    if (out) *out = nullptr;
++    if (self->slot_count <= 47) return refuse_beyond_device(86, self->slot_count);  // predates ID3D12Device2
++    if (!riid) return E_POINTER;
++    using Fn = HRESULT(WINAPI*)(ID3D12Device*, const D3D12_PIPELINE_STATE_STREAM_DESC*, const IID*, void**);
++    return reinterpret_cast<Fn>(self->real_vtable[47])(self->real, desc, riid, out);
++}
++
++// Xbox slot 101: CreateStateObject(desc, riid, out), forwarded to PC ID3D12Device5::CreateStateObject (PC slot 62,
++// displaced on Xbox by compute-PSO slot 62).
++HRESULT proxy_create_state_object(DeviceProxy* self, const D3D12_STATE_OBJECT_DESC* desc, const IID* riid, void** out) {
++    note_slot(101);
++    if (out) *out = nullptr;
++    if (self->slot_count <= 62) return refuse_beyond_device(101, self->slot_count);  // predates ID3D12Device5
++    if (!riid) return E_POINTER;
++    using Fn = HRESULT(WINAPI*)(ID3D12Device*, const D3D12_STATE_OBJECT_DESC*, const IID*, void**);
++    return reinterpret_cast<Fn>(self->real_vtable[62])(self->real, desc, riid, out);
++}
++
++// Xbox slot 108: GetResourceAllocationInfo2, forwarded to PC ID3D12Device8::GetResourceAllocationInfo2 (PC slot 68).
++// The retail executable calls struct-returning device methods with the C ABI (return buffer in RCX, device proxy in
++// RDX); a PC C++ caller passes the proxy in RCX and the return buffer in RDX. Both orders are accepted. The title's
++// descriptor builder populates 56-byte D3D12_RESOURCE_DESC entries, so the input array is indexed with a 56-byte
++// stride (sizeof(D3D12_RESOURCE_DESC)), each entry is expanded into a zeroed D3D12_RESOURCE_DESC1 with
++// SamplerFeedbackMipRegion cleared, and Xbox layout words (e.g. 0x101, 0x105) and console flag bits above the PC
++// D3D12_RESOURCE_FLAGS are normalized on the copy before the PC call.
++std::uint64_t proxy_get_resource_allocation_info2(DeviceProxy* self, std::uint64_t a1, std::uint64_t a2,
++                                                  std::uint64_t a3, std::uint64_t a4, std::uint64_t a5) {
++    note_slot(108);
++    DeviceProxy* proxy = nullptr;
++    D3D12_RESOURCE_ALLOCATION_INFO* ret = nullptr;
++    if (is_device_proxy(self)) {
++        proxy = self;
++        ret = reinterpret_cast<D3D12_RESOURCE_ALLOCATION_INFO*>(a1);
++    } else if (is_device_proxy(reinterpret_cast<const void*>(a1))) {
++        proxy = reinterpret_cast<DeviceProxy*>(a1);
++        ret = reinterpret_cast<D3D12_RESOURCE_ALLOCATION_INFO*>(self);
++    }
++    if (!ret) return 0;
++    if (!proxy) {
++        *ret = {UINT64_MAX, 0};
++        return reinterpret_cast<std::uint64_t>(ret);
++    }
++    if (proxy->slot_count <= 68) {
++        refuse_beyond_device(108, proxy->slot_count);
++        *ret = {UINT64_MAX, 0};
++        return reinterpret_cast<std::uint64_t>(ret);
++    }
++    const auto visible_mask = static_cast<UINT>(a2);
++    const auto count = static_cast<UINT>(a3);
++    const auto* raw_descs = reinterpret_cast<const D3D12_RESOURCE_DESC*>(a4);
++    auto* info1 = reinterpret_cast<D3D12_RESOURCE_ALLOCATION_INFO1*>(a5);
++    if (count > 0 && !raw_descs) {  // a count with no descriptor array: refuse like the other bad-input paths
++        *ret = {UINT64_MAX, 0};
++        return reinterpret_cast<std::uint64_t>(ret);
++    }
++
++    std::vector<D3D12_RESOURCE_DESC1> cleaned;
++    const D3D12_RESOURCE_DESC1* descs_to_pass = nullptr;
++    if (raw_descs && count > 0) {
++        try {
++            cleaned.resize(count);
++        } catch (...) {
++            *ret = {UINT64_MAX, 0};
++            return reinterpret_cast<std::uint64_t>(ret);
++        }
++        for (UINT i = 0; i < count; ++i) {
++            D3D12_RESOURCE_DESC1 d{};
++            std::memcpy(&d, &raw_descs[i], sizeof(D3D12_RESOURCE_DESC));
++            d.SamplerFeedbackMipRegion = {};
++            if (static_cast<std::uint32_t>(d.Layout) >
++                static_cast<std::uint32_t>(D3D12_TEXTURE_LAYOUT_64KB_STANDARD_SWIZZLE)) {
++                d.Layout = d.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER ? D3D12_TEXTURE_LAYOUT_ROW_MAJOR
++                                                                          : D3D12_TEXTURE_LAYOUT_UNKNOWN;
++            }
++            constexpr std::uint32_t kPcResourceFlagsMask = 0x1FFu;
++            d.Flags = static_cast<D3D12_RESOURCE_FLAGS>(static_cast<std::uint32_t>(d.Flags) & kPcResourceFlagsMask);
++            cleaned[i] = d;
++        }
++        descs_to_pass = cleaned.data();
++    }
++
++    using Fn = D3D12_RESOURCE_ALLOCATION_INFO*(WINAPI*)(
++        ID3D12Device*, D3D12_RESOURCE_ALLOCATION_INFO*, UINT, UINT, const D3D12_RESOURCE_DESC1*,
++        D3D12_RESOURCE_ALLOCATION_INFO1*);
++    reinterpret_cast<Fn>(proxy->real_vtable[68])(proxy->real, ret, visible_mask, count, descs_to_pass, info1);
++    return reinterpret_cast<std::uint64_t>(ret);
++}
++
+ template <unsigned Slot>
+ std::uint64_t WINAPI proxy_slot(DeviceProxy* self, std::uint64_t a1, std::uint64_t a2, std::uint64_t a3,
+                                 std::uint64_t a4, std::uint64_t a5, std::uint64_t a6, std::uint64_t a7,
+@@ -1529,6 +1624,16 @@ std::uint64_t WINAPI proxy_slot(DeviceProxy* self, std::uint64_t a1, std::uint64
+             static_cast<D3D12_RESOURCE_STATES>(static_cast<std::uint32_t>(a4)),
+             reinterpret_cast<const D3D12_CLEAR_VALUE*>(a5), reinterpret_cast<const IID*>(a6),
+             reinterpret_cast<void**>(a7)));
++    } else if constexpr (Slot == 86) {
++        return hr_to_u64(proxy_create_pipeline_state(
++            self, reinterpret_cast<const D3D12_PIPELINE_STATE_STREAM_DESC*>(a1),
++            reinterpret_cast<const IID*>(a2), reinterpret_cast<void**>(a3)));
++    } else if constexpr (Slot == 101) {
++        return hr_to_u64(proxy_create_state_object(
++            self, reinterpret_cast<const D3D12_STATE_OBJECT_DESC*>(a1),
++            reinterpret_cast<const IID*>(a2), reinterpret_cast<void**>(a3)));
++    } else if constexpr (Slot == 108) {
++        return proxy_get_resource_allocation_info2(self, a1, a2, a3, a4, a5);
+     } else {
+         note_slot(Slot);
+         // Xbox device slots, before the PC vtable is indexed: the public HLE's 78/79/80 would otherwise reach
+@@ -1706,7 +1811,7 @@ ID3D12Device* device_proxy_real_device(const void* device) {
+ bool device_slot_overridden(unsigned slot) {
+     if (slot <= 2 || slot == 8 || slot == 9 || slot == 14 || slot == 31 || slot == 32 || slot == 34 || slot == 35 ||
+         slot == 36 || slot == 45 || slot == 46 || slot == 50 || slot == 62 || slot == 67 ||
+-        slot == 75 || slot == 76)
++        slot == 75 || slot == 76 || slot == 86 || slot == 101 || slot == 108)
+         return true;
+     const XboxDeviceSlotRoutes& routes = xbox_device_slot_routes();
+     return slot == routes.frame_interval || slot == routes.schedule_event || slot == routes.wait_event ||
+diff --git a/runtime/shims/d3d12_xs_device.h b/runtime/shims/d3d12_xs_device.h
+index 0019ec5069..65ba3628de 100644
+--- a/runtime/shims/d3d12_xs_device.h
++++ b/runtime/shims/d3d12_xs_device.h
+@@ -15,6 +15,14 @@
+ //   slots 78/79/80  SetFrameIntervalX, ScheduleFrameEventX, WaitFrameEventX. A per-device token state machine answers
+ //             them before the PC vtable is indexed; WaitFrameEventX returns at once with a fresh non-zero token.
+ //             Slot 80 is outside a PC ID3D12Device11 table, so it is checked before the beyond-table refusal.
++//   slot 86   CreatePipelineState(desc, riid, out) -> PC ID3D12Device2::CreatePipelineState (PC slot 47).
++//   slot 101  CreateStateObject(desc, riid, out) -> PC ID3D12Device5::CreateStateObject (PC slot 62, displaced on
++//             Xbox by compute-PSO slot 62).
++//   slot 108  GetResourceAllocationInfo2(ret, this, visible_mask, count, descs, info1) -> PC
++//             ID3D12Device8::GetResourceAllocationInfo2 (PC slot 68), accepting the console C-ABI struct return
++//             (return buffer in RCX, device in RDX) as well as the PC C++ order, with each 56-byte
++//             D3D12_RESOURCE_DESC expanded to a zero-initialized D3D12_RESOURCE_DESC1 and Xbox layout words and
++//             flag bits normalized on the copy.
+ // The slots 48/73/78/79/80 are the public HLE Freminet/ScarlettX's observation, not Microsoft documentation, and can
+ // be moved with LEONIDA_XS_QUEUE_X_SLOT, LEONIDA_XS_LIST_X_SLOT, LEONIDA_XS_FRAME_INTERVAL_SLOT,
+ // LEONIDA_XS_SCHEDULE_EVENT_SLOT and LEONIDA_XS_WAIT_EVENT_SLOT (3..127; anything else is logged once and ignored).
+@@ -91,9 +99,9 @@ ID3D12Device* device_proxy_real_device(const void* device);
+ 
+ // True for slots the proxy handles itself rather than forwarding verbatim: IUnknown (0-2), 8 and 75 (queue
+ // proxies), 9 (allocator proxies), 14, 31/34/35/45/46/50 (proxies unwrapped), 32 and 36 (fence proxies), 48/73 and
+-// 78/79/80 (the Xbox slots above, at their configured indices), 62, 67 and 76. Slot 10 is intentionally false: the
+-// measured 9/10 handle conversion is on the heap proxy, and device slot 9 is CreateCommandAllocator, which the proxy
+-// handles for the allocator proxy.
++// 78/79/80 (the Xbox slots above, at their configured indices), 62, 67, 76, 86, 101 and 108. Slot 10 is intentionally
++// false: the measured 9/10 handle conversion is on the heap proxy, and device slot 9 is CreateCommandAllocator, which
++// the proxy handles for the allocator proxy.
+ bool device_slot_overridden(unsigned slot);
+ 
+ // Queue and fence proxies created by device slots 8/75 and 36. The real_* accessors return the wrapped object
+diff --git a/runtime/test/device_proxy_test.cpp b/runtime/test/device_proxy_test.cpp
+index 46a853e7c3..31918dd825 100644
+--- a/runtime/test/device_proxy_test.cpp
++++ b/runtime/test/device_proxy_test.cpp
+@@ -159,6 +159,9 @@ int main(int argc, char** argv) {
+     check(rt::d3d12_xs::device_slot_overridden(14), "device slot 14 is the descriptor-heap override");
+     check(rt::d3d12_xs::device_slot_overridden(62), "device slot 62 is the compute-PSO override");
+     check(rt::d3d12_xs::device_slot_overridden(76), "device slot 76 is the resource override");
++    check(rt::d3d12_xs::device_slot_overridden(86), "device slot 86 is the CreatePipelineState override");
++    check(rt::d3d12_xs::device_slot_overridden(101), "device slot 101 is the CreateStateObject override");
++    check(rt::d3d12_xs::device_slot_overridden(108), "device slot 108 is the GetResourceAllocationInfo2 override");
+     check(rt::d3d12_xs::device_slot_overridden(67),
+           "device slot 67 is the DeserializeComputePipelineStateX override (console native-code compute pipeline, not PC CreateProtectedResourceSession1)");
+ 
+@@ -436,6 +439,101 @@ int main(int argc, char** argv) {
+         check(SUCCEEDED(hr) && pso67 != nullptr, "slot 67 creates a compute PSO via CreateComputePipelineState");
+         check(rt::d3d12_xs::device_slot_hits(67) == 1, "slot 67 hit counter is 1");
+         check(rt::d3d12_xs::device_slot_first_call_seen(67), "slot 67 first-call flag is set");
++
++        // Slot 86: CreatePipelineState(const D3D12_PIPELINE_STATE_STREAM_DESC*, REFIID, void**), forwarded to PC
++        // ID3D12Device2::CreatePipelineState (PC slot 47).
++        if (slots > 47) {
++            struct alignas(void*) ComputeStream {
++                alignas(void*) D3D12_PIPELINE_STATE_SUBOBJECT_TYPE root_type =
++                    D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE;
++                ID3D12RootSignature* root_sig = nullptr;
++                alignas(void*) D3D12_PIPELINE_STATE_SUBOBJECT_TYPE cs_type = D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS;
++                D3D12_SHADER_BYTECODE cs{};
++            } stream;
++            stream.root_sig = root_signature.Get();
++            stream.cs.pShaderBytecode = bytecode->GetBufferPointer();
++            stream.cs.BytecodeLength = bytecode->GetBufferSize();
++            D3D12_PIPELINE_STATE_STREAM_DESC stream_desc{sizeof(stream), &stream};
++            using XboxCreatePipelineStateFn =
++                HRESULT(WINAPI*)(void*, const D3D12_PIPELINE_STATE_STREAM_DESC*, const IID*, void**);
++            auto create_stream_pso = reinterpret_cast<XboxCreatePipelineStateFn>(proxy_vtbl[86]);
++            ComPtr<ID3D12PipelineState> pso86;
++            hr = create_stream_pso(device.Get(), &stream_desc, &iid_pso,
++                                   reinterpret_cast<void**>(pso86.GetAddressOf()));
++            check(SUCCEEDED(hr) && pso86 != nullptr,
++                  "slot 86 creates a PSO via PC ID3D12Device2::CreatePipelineState (slot 47)");
++            check(rt::d3d12_xs::device_slot_hits(86) == 1, "slot 86 hit counter is 1");
++            check(rt::d3d12_xs::device_slot_first_call_seen(86), "slot 86 first-call flag is set");
++        }
++    }
++
++    // Slot 101: CreateStateObject(const D3D12_STATE_OBJECT_DESC*, REFIID, void**), forwarded to PC
++    // ID3D12Device5::CreateStateObject (PC slot 62).
++    if (slots > 62) {
++        using XboxCreateStateObjectFn = HRESULT(WINAPI*)(void*, const D3D12_STATE_OBJECT_DESC*, const IID*, void**);
++        auto create_state_object = reinterpret_cast<XboxCreateStateObjectFn>(proxy_vtbl[101]);
++        D3D12_STATE_OBJECT_DESC empty_so{};
++        empty_so.Type = D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE;
++        void* so_out = reinterpret_cast<void*>(0x1111);
++        hr = create_state_object(device.Get(), &empty_so, nullptr, &so_out);
++        check(hr == E_POINTER && so_out == nullptr, "slot 101 nulls its output for a null IID");
++        check(rt::d3d12_xs::device_slot_hits(101) == 1, "slot 101 hit counter is 1");
++    }
++
++    // Slot 108: GetResourceAllocationInfo2(ret, this, visible_mask, count, descs, info1) with C-ABI struct return,
++    // 56-byte D3D12_RESOURCE_DESC entries, and Xbox layout/flag words, compared against direct PC
++    // ID3D12Device8::GetResourceAllocationInfo2 (PC slot 68).
++    if (slots > 68) {
++        ComPtr<ID3D12Device8> real_device8;
++        if (real && SUCCEEDED(real->QueryInterface(IID_PPV_ARGS(real_device8.GetAddressOf()))) && real_device8) {
++            D3D12_RESOURCE_DESC xbox_descs[2]{};
++            xbox_descs[0].Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++            xbox_descs[0].Width = 64;
++            xbox_descs[0].Height = 64;
++            xbox_descs[0].DepthOrArraySize = 1;
++            xbox_descs[0].MipLevels = 1;
++            xbox_descs[0].Format = DXGI_FORMAT_R8G8B8A8_UNORM;
++            xbox_descs[0].SampleDesc.Count = 1;
++            xbox_descs[0].Layout = static_cast<D3D12_TEXTURE_LAYOUT>(0x105);
++            xbox_descs[0].Flags = static_cast<D3D12_RESOURCE_FLAGS>(
++                D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | 0x300000u);
++            xbox_descs[1].Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++            xbox_descs[1].Width = 4096;
++            xbox_descs[1].Height = 1;
++            xbox_descs[1].DepthOrArraySize = 1;
++            xbox_descs[1].MipLevels = 1;
++            xbox_descs[1].SampleDesc.Count = 1;
++            xbox_descs[1].Layout = static_cast<D3D12_TEXTURE_LAYOUT>(0x101);
++            xbox_descs[1].Flags = static_cast<D3D12_RESOURCE_FLAGS>(0x200000u);
++
++            D3D12_RESOURCE_DESC1 pc_descs[2]{};
++            std::memcpy(&pc_descs[0], &xbox_descs[0], sizeof(D3D12_RESOURCE_DESC));
++            pc_descs[0].SamplerFeedbackMipRegion = {};
++            pc_descs[0].Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
++            pc_descs[0].Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
++            std::memcpy(&pc_descs[1], &xbox_descs[1], sizeof(D3D12_RESOURCE_DESC));
++            pc_descs[1].SamplerFeedbackMipRegion = {};
++            pc_descs[1].Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++            pc_descs[1].Flags = D3D12_RESOURCE_FLAG_NONE;
++
++            D3D12_RESOURCE_ALLOCATION_INFO1 pc_info1[2]{};
++            const D3D12_RESOURCE_ALLOCATION_INFO pc_info =
++                real_device8->GetResourceAllocationInfo2(1, 2, pc_descs, pc_info1);
++
++            using XboxGetAllocInfo2CAbiFn = D3D12_RESOURCE_ALLOCATION_INFO*(WINAPI*)(
++                D3D12_RESOURCE_ALLOCATION_INFO*, void*, UINT, UINT, const D3D12_RESOURCE_DESC*,
++                D3D12_RESOURCE_ALLOCATION_INFO1*);
++            auto get_alloc_info2 = reinterpret_cast<XboxGetAllocInfo2CAbiFn>(proxy_vtbl[108]);
++            D3D12_RESOURCE_ALLOCATION_INFO xbox_info{};
++            D3D12_RESOURCE_ALLOCATION_INFO1 xbox_info1[2]{};
++            D3D12_RESOURCE_ALLOCATION_INFO* ret_ptr =
++                get_alloc_info2(&xbox_info, device.Get(), 1, 2, xbox_descs, xbox_info1);
++            check(ret_ptr == &xbox_info && xbox_info.SizeInBytes == pc_info.SizeInBytes &&
++                      xbox_info.Alignment == pc_info.Alignment && xbox_info1[0].SizeInBytes == pc_info1[0].SizeInBytes &&
++                      xbox_info1[1].SizeInBytes == pc_info1[1].SizeInBytes,
++                  "slot 108 C-ABI GetResourceAllocationInfo2 with 56-byte Xbox descs matches PC Device8");
++            check(rt::d3d12_xs::device_slot_hits(108) == 1, "slot 108 hit counter is 1");
++        }
+     }
+ 
+     // _COM_Outptr_ (d3d12.h): a failed create leaves NULL in the output. WARP accepts invalid heap descriptions,
+diff --git a/runtime/test/xs_proxy_mock_test.cpp b/runtime/test/xs_proxy_mock_test.cpp
+index f0030116bd..1d979a899e 100644
+--- a/runtime/test/xs_proxy_mock_test.cpp
++++ b/runtime/test/xs_proxy_mock_test.cpp
+@@ -197,6 +197,27 @@ std::uint64_t mock_call(Mock* m, unsigned slot, const std::uint64_t* words) {
+             case 34: case 35: case 46: copy_array(m, slot, a2, a1); break;  // (count, objects, ...)
+             case 45: copy_array(m, slot, a1, a3); break;                    // (fences, values, count, ...)
+             case 50: copy_array(m, slot, a3, a2); break;                    // (flags, count, objects, fence, value)
++            case 68: {                                                      // GetResourceAllocationInfo2
++                auto* ret = reinterpret_cast<D3D12_RESOURCE_ALLOCATION_INFO*>(a1);
++                const auto count = static_cast<std::uint32_t>(a3);
++                const auto* descs = reinterpret_cast<const D3D12_RESOURCE_DESC1*>(a4);
++                auto* info1 = reinterpret_cast<D3D12_RESOURCE_ALLOCATION_INFO1*>(words[4]);
++                if (descs && count > 0) {
++                    m->array[68][0] = static_cast<std::uint64_t>(descs[0].Layout);
++                    m->array[68][1] = static_cast<std::uint64_t>(descs[0].Flags);
++                    m->array[68][2] = descs[0].SamplerFeedbackMipRegion.Width |
++                                      descs[0].SamplerFeedbackMipRegion.Height |
++                                      descs[0].SamplerFeedbackMipRegion.Depth;
++                    if (count > 1) {
++                        const auto& last = descs[count - 1];
++                        m->array[68][3] = (static_cast<std::uint64_t>(last.Layout) << 32) |
++                                          static_cast<std::uint32_t>(last.Flags);
++                    }
++                }
++                if (ret) *ret = {0x40000, 0x10000};
++                if (info1 && count > 0) info1[0] = {0, 0x10000, 0x40000};
++                return a1;
++            }
+             default: break;
+         }
+         return S_OK;
+@@ -381,6 +402,35 @@ int check_levels() {
+             EXPECT(r75 == E_NOTIMPL && !queue1 && mock->calls[75] == 0);
+         }
+ 
++        // 86: Xbox CreatePipelineState -> PC slot 47 (ID3D12Device2)
++        void* pso_out = reinterpret_cast<void*>(1);
++        const HRESULT r86 = hr_of(raw(device, 86, 0, word(&kUnknownIid), word(&pso_out)));
++        if (l.level >= 2) {
++            EXPECT(r86 == S_OK && mock->calls[47] == 1 && mock->calls[86] == 0);
++        } else {
++            EXPECT(r86 == E_NOTIMPL && !pso_out && mock->calls[47] == 0 && mock->calls[86] == 0);
++        }
++
++        // 101: Xbox CreateStateObject -> PC slot 62 (ID3D12Device5)
++        void* so_out = reinterpret_cast<void*>(1);
++        const HRESULT r101 = hr_of(raw(device, 101, 0, word(&kUnknownIid), word(&so_out)));
++        if (l.level >= 5) {
++            EXPECT(r101 == S_OK && mock->calls[62] == 1 && mock->calls[101] == 0);
++        } else {
++            EXPECT(r101 == E_NOTIMPL && !so_out && mock->calls[62] == 0 && mock->calls[101] == 0);
++        }
++
++        // 108: Xbox GetResourceAllocationInfo2 -> PC slot 68 (ID3D12Device8)
++        D3D12_RESOURCE_ALLOCATION_INFO alloc_info{1, 1};
++        const std::uint64_t r108 = raw(device, 108, word(&alloc_info), 1, 0, 0, 0);
++        if (l.level >= 8) {
++            EXPECT(r108 == word(&alloc_info) && alloc_info.SizeInBytes == 0x40000 && alloc_info.Alignment == 0x10000 &&
++                   mock->calls[68] == 1 && mock->calls[108] == 0);
++        } else {
++            EXPECT(r108 == word(&alloc_info) && alloc_info.SizeInBytes == UINT64_MAX && alloc_info.Alignment == 0 &&
++                   mock->calls[68] == 0 && mock->calls[108] == 0);
++        }
++
+         Mock* const queue_mock = reinterpret_cast<Mock*>(real_queue);
+         Mock* const fence_mock = reinterpret_cast<Mock*>(real_fence);
+         EXPECT(release(queue) == 0 && release(fence) == 0);
+@@ -753,7 +803,94 @@ int check_xbox_slots() {
+     EXPECT(hr_of(raw(device, 73, word(&desc), word(allocator), 0, word(&list_iid), 0)) == E_POINTER);
+ 
+     EXPECT(xs::device_slot_overridden(48) && xs::device_slot_overridden(73) && xs::device_slot_overridden(78) &&
+-           xs::device_slot_overridden(79) && xs::device_slot_overridden(80));
++           xs::device_slot_overridden(79) && xs::device_slot_overridden(80) && xs::device_slot_overridden(86) &&
++           xs::device_slot_overridden(101) && xs::device_slot_overridden(108));
++
++    // 86 CreatePipelineState(desc, riid, out) -> PC slot 47 (ID3D12Device2::CreatePipelineState).
++    D3D12_PIPELINE_STATE_STREAM_DESC stream_desc{};
++    const IID pso_iid = __uuidof(ID3D12PipelineState);
++    void* pso_stream_out = nullptr;
++    EXPECT(hr_of(raw(device, 86, word(&stream_desc), word(&pso_iid), word(&pso_stream_out))) == S_OK);
++    EXPECT(mock->calls[86] == 0 && mock->calls[47] == 1 && xs::device_slot_hits(86) == 1);
++    EXPECT(mock->args[47][0] == word(&stream_desc) && mock->args[47][1] == word(&pso_iid) &&
++           mock->args[47][2] == word(&pso_stream_out));
++    pso_stream_out = reinterpret_cast<void*>(1);
++    EXPECT(hr_of(raw(device, 86, word(&stream_desc), 0, word(&pso_stream_out))) == E_POINTER && !pso_stream_out);
++
++    // 101 CreateStateObject(desc, riid, out) -> PC slot 62 (ID3D12Device5::CreateStateObject).
++    D3D12_STATE_OBJECT_DESC state_obj_desc{};
++    const IID so_iid = __uuidof(ID3D12StateObject);
++    void* so_out = nullptr;
++    EXPECT(hr_of(raw(device, 101, word(&state_obj_desc), word(&so_iid), word(&so_out))) == S_OK);
++    EXPECT(mock->calls[101] == 0 && mock->calls[62] == 1 && xs::device_slot_hits(101) == 1);
++    EXPECT(mock->args[62][0] == word(&state_obj_desc) && mock->args[62][1] == word(&so_iid) &&
++           mock->args[62][2] == word(&so_out));
++    so_out = reinterpret_cast<void*>(1);
++    EXPECT(hr_of(raw(device, 101, word(&state_obj_desc), 0, word(&so_out))) == E_POINTER && !so_out);
++
++    // 108 GetResourceAllocationInfo2 -> PC slot 68 (ID3D12Device8::GetResourceAllocationInfo2), called with the
++    // retail executable's C-ABI struct return (return buffer in RCX, device proxy in RDX), 56-byte D3D12_RESOURCE_DESC
++    // entries, and an Xbox layout/flag word, as well as the PC C++ argument order.
++    void* const* proxy_vtable = *reinterpret_cast<void* const* const*>(device);
++    using CAbiSlot108Fn = D3D12_RESOURCE_ALLOCATION_INFO*(WINAPI*)(
++        D3D12_RESOURCE_ALLOCATION_INFO*, void*, UINT, UINT, const D3D12_RESOURCE_DESC*,
++        D3D12_RESOURCE_ALLOCATION_INFO1*);
++    const auto call_slot108_c_abi = reinterpret_cast<CAbiSlot108Fn>(proxy_vtable[108]);
++    D3D12_RESOURCE_DESC xbox_descs[2]{};
++    xbox_descs[0].Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++    xbox_descs[0].Width = 3840;
++    xbox_descs[0].Height = 2160;
++    xbox_descs[0].DepthOrArraySize = 1;
++    xbox_descs[0].MipLevels = 1;
++    xbox_descs[0].Format = DXGI_FORMAT_R8G8B8A8_UNORM;
++    xbox_descs[0].SampleDesc.Count = 1;
++    xbox_descs[0].Layout = static_cast<D3D12_TEXTURE_LAYOUT>(0x105);
++    xbox_descs[0].Flags = static_cast<D3D12_RESOURCE_FLAGS>(
++        D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | 0x300000u);
++    xbox_descs[1].Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++    xbox_descs[1].Width = 4096;
++    xbox_descs[1].Height = 1;
++    xbox_descs[1].DepthOrArraySize = 1;
++    xbox_descs[1].MipLevels = 1;
++    xbox_descs[1].SampleDesc.Count = 1;
++    xbox_descs[1].Layout = static_cast<D3D12_TEXTURE_LAYOUT>(0x101);
++    xbox_descs[1].Flags = static_cast<D3D12_RESOURCE_FLAGS>(D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | 0x200000u);
++    D3D12_RESOURCE_ALLOCATION_INFO ret_info{};
++    D3D12_RESOURCE_ALLOCATION_INFO1 detail_info[2]{};
++    EXPECT(call_slot108_c_abi(&ret_info, device, 1, 2, xbox_descs, detail_info) == &ret_info);
++    EXPECT(ret_info.SizeInBytes == 0x40000 && ret_info.Alignment == 0x10000);
++    EXPECT(detail_info[0].SizeInBytes == 0x40000 && detail_info[0].Alignment == 0x10000);
++    EXPECT(mock->calls[108] == 0 && mock->calls[68] == 1 && xs::device_slot_hits(108) == 1);
++    EXPECT(mock->array[68][0] == static_cast<std::uint64_t>(D3D12_TEXTURE_LAYOUT_UNKNOWN));
++    EXPECT(mock->array[68][1] == static_cast<std::uint64_t>(
++        D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS));
++    EXPECT(mock->array[68][2] == 0);
++    EXPECT(mock->array[68][3] == ((static_cast<std::uint64_t>(D3D12_TEXTURE_LAYOUT_ROW_MAJOR) << 32) |
++                                  static_cast<std::uint32_t>(D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)));
++
++    D3D12_RESOURCE_DESC xbox_buf_desc = xbox_descs[1];
++    xbox_buf_desc.Flags = static_cast<D3D12_RESOURCE_FLAGS>(0x200000u);
++    D3D12_RESOURCE_ALLOCATION_INFO buf_ret{};
++    EXPECT(raw(device, 108, word(&buf_ret), 1, 1, word(&xbox_buf_desc), 0) == word(&buf_ret));
++    EXPECT(buf_ret.SizeInBytes == 0x40000 && mock->calls[68] == 2 && xs::device_slot_hits(108) == 2);
++    EXPECT(mock->array[68][0] == static_cast<std::uint64_t>(D3D12_TEXTURE_LAYOUT_ROW_MAJOR));
++    EXPECT(mock->array[68][1] == static_cast<std::uint64_t>(D3D12_RESOURCE_FLAG_NONE));
++
++    D3D12_RESOURCE_DESC batch1025[1025]{};
++    for (int i = 0; i < 1024; ++i) batch1025[i] = xbox_descs[0];
++    batch1025[1024] = xbox_descs[1];
++    D3D12_RESOURCE_ALLOCATION_INFO batch_ret{};
++    EXPECT(call_slot108_c_abi(&batch_ret, device, 1, 1025, batch1025, nullptr) == &batch_ret);
++    EXPECT(batch_ret.SizeInBytes == 0x40000 && mock->calls[68] == 3 && xs::device_slot_hits(108) == 3);
++    EXPECT(mock->array[68][0] == static_cast<std::uint64_t>(D3D12_TEXTURE_LAYOUT_UNKNOWN));
++    EXPECT(mock->array[68][3] == ((static_cast<std::uint64_t>(D3D12_TEXTURE_LAYOUT_ROW_MAJOR) << 32) |
++                                  static_cast<std::uint32_t>(D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)));
++
++    // A count with a null descriptor array is refused with {UINT64_MAX, 0} and never reaches PC slot 68.
++    D3D12_RESOURCE_ALLOCATION_INFO null_ret{};
++    EXPECT(call_slot108_c_abi(&null_ret, device, 1, 2, nullptr, nullptr) == &null_ret);
++    EXPECT(null_ret.SizeInBytes == UINT64_MAX && null_ret.Alignment == 0);
++    EXPECT(mock->calls[68] == 3 && xs::device_slot_hits(108) == 4);
+ 
+     EXPECT(release(allocator) == 0 && real_allocator->refs == 0);
+     EXPECT(release(queue) == 0);

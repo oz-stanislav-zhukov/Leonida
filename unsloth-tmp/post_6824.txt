@@ -1,0 +1,12 @@
+Windows data point with #8461 (the DStorageGetFactory takeover) on top of `main` 867d922f0: boot gets past DStorage and into the five-pool stage, then hits a new AV (AI-assisted: qwen; RVAs and error classes only, no game data).
+
+**Setup:** retail 1.0.2.1 from my own copy, `gta6rt --run` with `LEONIDA_D3D12=vulkan`, RTX 5060 Ti 16 GB, NVIDIA 621.24 (32.0.16.2124), Windows 10 22H2, MSVC 14.44, RelWithDebInfo. Build: head of #8461 (`3ec863f9b`) in a worktree, i.e. main 867d922f0 plus the DirectStorage shim.
+
+**What happens:**
+- Plain main stops earlier, at the first unimplemented import: `xcrdapi.dll!DStorageGetFactory` (exit 0x80004005).
+- With #8461 the factory is served, `XGameRuntimeInitialize` completes, and the title runs its static initializers: all five `XMemVirtualAlloc` pools are served (attributes `0x21`, `0x3`, `0x183`, `0x283`, `0x181`; sizes 24 GiB / 24 GiB / 1.15 GiB / 2.15 GiB / 20 MiB - the same table as the issue).
+- Then, on the main thread right after the alloc sequence: **AV 0xC0000005, read address 0xFFFFFFFFFFFFFFFF**, at `game_scarlett_master.exe+0x51d1adc`.
+- Stack (title frames only): `+0x51d1adc -> +0x51d1aaa -> +0x770e76 -> +0x5dc0fe8 -> +0x21ba534 -> ucrtbase+0x1e473 -> +0x56a1dd0`.
+- Two consecutive runs (one with `--trace-d3d12 --trace`), same stop both times.
+
+So on Windows with the DStorage gap closed, the next blocker after the pools is this -1 dereference instead of the int3 at XMemAllocatePhysicalPages - or the title never gets that far because it faults earlier. Happy to run more builds (for example #8461 combined with #6995, or any other combination) if that helps narrow it down.

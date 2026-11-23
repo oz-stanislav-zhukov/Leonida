@@ -1,0 +1,552 @@
+state=open comments=30
+This is the shared list of who works on what. @ItsNotRexed [asked for it to be kept this way](https://github.com/ItsNotRexed/Leonida/issues/156#issuecomment-7069127599): **claim work here before starting a PR**; they check it when merging. Where two PRs overlap, the one that lands first is merged and the other is asked to rebase or close.
+
+The tables are updated by a script from open PRs, fork branches and the commands below, and checked by @KoertLichtendonk. This issue continues #9401 (and before it #156, #374, #634, #1006, #1218, #1380, #1548, #1745, #1902, #2078, #2300, #2516, #2716, #2891, #3047, #3232, #3381, #3574, #3796, #3918, #4084, #4257, #4421, #4571, #4683, #4816, #4933, #5032, #5156, #5256, #5361, #5581, #5781, #5934, #6089, #6214, #6414, #6603, #6750, #6910, #7049, #7231, #7333, #7496, #7599, #7694, #7804, #7913, #8047, #8186, #8344, #8504, #8683, #8868, #9065, #9235), which reached its handover point; claims made there still count.
+
+**Read [`CONTRIBUTING.md`](https://github.com/ItsNotRexed/Leonida/blob/main/CONTRIBUTING.md) first** (and [`AGENTS.md`](https://github.com/ItsNotRexed/Leonida/blob/main/AGENTS.md) if you use a coding agent). No game data anywhere: archives, the executable, carved files, shaders in any form (DXBC, FSSM, disassembly, SPIR-V), textures, models, audio, videos, or logs and reports that quote them. No keys or decryption, and nothing online. Share outcomes (counts, pass/fail, error classes), not inputs.
+
+_Updated 2026-11-23 21:25 UTC by the coordinator (@KoertLichtendonk); corrections are welcome as comments._
+
+### Up for grabs
+
+Unclaimed work, most useful first. Pick one, post `claiming: <ID>` here, and start. ? = good first task. Size: S = an evening, M = a few days, L = a larger project or several PRs.
+
+| ID | What | Why it matters | Needs | Size |
+|---|---|---|---|---|
+| BUILD-3514 | I'll check the resident image-load fixture in #8968 on a physical Windows RX 580. (earlier: `aslan2142`, [their claim](https://github.com/ItsNotRexed/Leonida/issues/9065#issuecomment-7113003393); no code found) |  |  | M |
+| SHADER-902 | translator contract row "Output modifiers on hardware (gfx1150)" (docs/design.md line 354), GPU check. (earlier: `gertify`, [their claim](https://github.com/ItsNotRexed/Leonida/issues/5156#issuecomment-7096020804); no code found) |  |  | M |
+| TEST-1141 | triage of failing ctest / run_gpu_tests / semantic tests on current main (both GPUs); fixing only failures nobody owns, plus LEONIDA_VK_DEVICE in vk_sampler_test/vk_bindl (earlier: `aslan2142`, [their claim](https://github.com/ItsNotRexed/Leonida/issues/8868#issuecomment-7112148239); no code found) |  |  | M |
+| TEST-1715 | la segunda parte de mi finding sobre `tests/test_bink_names.py`, que sigo teniendo sin dueno. (earlier: `aslan2142`, [their claim](https://github.com/ItsNotRexed/Leonida/issues/9401#issuecomment-7114162204); no code found) |  |  | M |
+
+**Plus 5 unclaimed `D3D-` items in #313**, most of them small and without game files.
+
+**Blocked, not up for grabs yet:** RT-240 The default overlay (`<game>\overlay`, `runtime/src/main.cpp:85`) is visible to the title as `GAME:\overlay`, with the title's writes listed twice and the deletion markers exposed; fix per the maintainer's choice (hide the root, or move the default out of the game folder) (waits for the maintainer's decision); TEST-88 Replay `valu_fuzz.py --family wave --seed 1` on a 32-wide GPU with #293 applied, and compare the mismatching programs with `VictorJulianiR`'s 13 predicted indices (waits for `esteban-dcp` will run it once #293 is rebased (`simonbronk`)); TEST-644 First GPU fixture for the `docs/design.md` row "16-bit vector compare `op_sel`" (`v_cmp(x)_*_{f16,u16,i16}` VOP3 `op_sel:[s0,s1]`, Not GPU-verified; CPU-checked by `tests/semantic/test_vcmp16_opsel.py`): a hand-written compute fixture with expected words in `check.py` / `run_gpu_tests.py`. (Narrowed by its first claimant: `v_mqsad_u32_u8` is #1509 / #1926, `ds_wrxchg2*` is #3208.) (waits for blocked (`AirKyzzZ`, 04:02) on the maintainer's decision about the 16-bit compare `op_sel` rule, and on a raw-word path for fixtures (llvm-mc rejects `op_sel` on these compares)).
+
+### Ready for review or a GPU test
+
+Open PRs with no conflicts, oldest first, grouped by what a check needs (Win = Windows + MSVC, GPU = a Vulkan GPU, game copy = your own copy of the game). A second check from someone other than the author makes merging faster. Pick one that fits your hardware, then comment **on the PR**: `Tested <commit> on <GPU, driver, OS>: pass` (or what failed), with what you ran, or review the code. "checked" lists who already tested or reviewed it; a PR nobody has checked needs you most. CI "not run" usually means a first-time contributor's run waits for maintainer approval.
+
+CI doesn't run on a fork's PR until a maintainer approves it, so most of these have no CI result yet. Listed: PRs with no check of their current head (?: checked before, but the head changed since, so it needs a re-check); the count after it is PRs whose current head has a check.
+
+- **code read (CPU)** (70 unchecked, 1916 checked): #2748 (CI running; ?), #3558 (?), #4046 (CI running; ?), #4795 (CI running; ?), #5137 (CI running; ?), #5462 (CI running; ?), #5758 (?), #6516 (CI running; ?), #7082 (CI running; ?), #7283 (CI running; ?), #7298 (?), #7300 (?), #7337 (?), #7408, #7421 (?), #7583 (CI running; ?), #7646, #7854 (?), #7882 (CI running; ?), #7998 (CI running; ?), #8123 (CI running), #8319 (?), #8571 (?), #8644, #8665 (?), #8675 (?), #8735 (CI running; ?), #8751 (CI running; ?), #8761 (CI running; ?), #8807 (?), #8808 (CI running; ?), #8936 (CI running; ?), #8972 (CI running), #8982 (CI running; ?), #8988, #9191 (?), #9243, #9256, #9281 (?), #9309 (?) and 30 more
+- **Win + GPU** (33 unchecked, 648 checked): #4533 (CI running; ?), #4557 (CI running; ?), #4581, #4944 (CI running; ?), #5378 (?), #6365 (?), #7336 (CI running; ?), #7571, #7584 (?), #8111 (?), #8213 (?), #8246, #8529 (CI running; ?), #8770, #8813 (CI running; ?), #8863 (?), #8966 (CI running; ?), #9023, #9083, #9327, #9328, #9336, #9370 (CI running), #9396, #9467, #9480, #9483, #9484, #9499 (CI running), #9505, #9515, #9516, #9523
+- **read** (32 unchecked, 276 checked): #1922 (CI running; ?), #4036 (CI running; ?), #4131 (?), #4705 (CI running; ?), #4899 (CI running; ?), #5002 (CI running; ?), #5118 (?), #5728 (CI running; ?), #5729 (CI running; ?), #5763 (?), #5789 (CI running; ?), #7058 (?), #7166 (?), #7416 (CI running; ?), #7598 (CI running; ?), #7855 (?), #7982 (?), #8102 (?), #8105 (CI running), #8228 (?), #8336 (?), #8597 (?), #8602 (?), #9005, #9081 (CI running; ?), #9263, #9283 (?), #9295 (?), #9300 (?), #9387, #9390, #9405 (CI running)
+- **Win** (10 unchecked, 203 checked): #5467 (CI red; ?), #8329 (?), #8391 (?), #8595 (CI running; ?), #9007 (?), #9197 (?), #9429, #9478 (CI running), #9487 (CI running), #9498
+- **GPU** (5 unchecked, 282 checked): #7054 (?), #8955 (CI running; ?), #9409, #9517 (CI running), #9521
+- **AMD + 32-wide GPU** (1 unchecked, 154 checked): #8537 (?)
+- **AMD + 32-wide GPU; game copy** (1 unchecked, 2 checked): #6963 (CI running; ?)
+- **AMD + 32-wide GPU; Win + GPU** (0 unchecked, 2 checked): none
+- **GPU; game copy** (0 unchecked, 2 checked): none
+- **Win + GPU; game copy** (0 unchecked, 7 checked): none
+- **Win; game copy** (0 unchecked, 2 checked): none
+- **game copy** (0 unchecked, 20 checked): none
+
+### Needs a rebase on `main`
+
+Open PRs that conflict with `main` after the last merge round, by author. Rebasing brings them back into the review queue above.
+
+- `evilclanker9000`: #1495, #1499, #1529, #2002, #2015, #2024, #2060, #2119 and 144 more
+- `kacper-serewis`: #2811, #2986, #3018, #4987, #5084, #5651, #5657, #5678 and 24 more
+- `gertify`: #4575, #5193, #5201, #5204, #5205, #5219, #5222, #5227 and 23 more
+- `Vonsek`: #1509, #1644, #2211, #2225, #2311, #2914, #2956, #3116 and 9 more
+- `tedin7`: #3974, #4233, #4236, #4433, #4456, #4621, #4843, #5057 and 6 more
+- `pmilewsskiedu-gif`: #3128, #3270, #3318, #3481, #3789, #3841, #3969, #4063 and 5 more
+- `SebSilent`: #4056, #4120, #4207, #4242, #4250, #4338, #4372, #4404 and 5 more
+- `Marukooh`: #2585, #3072, #3224, #4090, #4110, #4115, #4116, #4144 and 4 more
+- `kapitche`: #3137, #3366, #3642, #4609, #4628, #4642, #4777, #4847 and 3 more
+- `x2Tweek`: #3216, #3885, #3994, #5058, #5260, #5349, #5388, #6601 and 2 more
+- `kotorvr`: #3410, #3570, #3601, #3668, #3675, #3683, #3793, #3814 and 1 more
+- `liang-kai-shui`: #4707, #4797, #5343, #5353, #5406, #5736, #5739, #5745 and 1 more
+- `Kam471`: #5609, #5662, #5775, #6198, #6230, #6582, #6583, #8977
+- `slopgobblercobbler`: #2272, #5435, #5440, #5441, #5469, #5480, #5490, #5566
+- `BBareth`: #6374, #6383, #6406, #6455, #6475, #6556, #7051
+- `DaniSBR1`: #837, #3549, #3803, #4064, #4309, #4408, #4772
+- `Jolymmiles`: #1646, #1845, #2904, #3078, #3086, #3879, #3915
+- `lumenpearson`: #2935, #3758, #3842, #4121, #4234, #4283, #4479
+- `nschlaepfer`: #1096, #1097, #1099, #1101, #3986, #4616, #4904
+- `Pierre-Kookis`: #4212, #4679, #4939, #5069, #5522, #5684, #5842
+- `Hiiva`: #5036, #5165, #5187, #5548, #6463, #7144
+- `shadshuvo`: #1371, #1438, #1964, #2783, #3143, #7150
+- `Stalkerino`: #5508, #5939, #6241, #6709, #6814, #7135
+- `abnalstlll-byte`: #3228, #4130, #4230, #4302, #4542
+- `illusionart453-max`: #4725, #4749, #4796, #4834, #4885
+- `traeb0n`: #2928, #2969, #3634, #3962, #3963
+- `Vadson159`: #2003, #2190, #3320, #4383, #6477
+- `vibryxcx`: #4310, #4416, #4782, #4970, #5249
+- `0xTehuti`: #157, #3107, #6496, #6928
+- `cynbun`: #5617, #5754, #6183, #6482
+- `Exopus-0x65f7ad0`: #4189, #5332, #5489, #7708
+- `Kilichi`: #6074, #6100, #6111, #6225
+- `KolliasG7`: #5021, #5147, #5149, #5151
+- `Koro4e`: #5356, #5894, #6202, #6409
+- `ligmaSec`: #3844, #4296, #4390, #6944
+- `nightmoon1996`: #1703, #2590, #2676, #3298
+- `Persudes`: #4517, #4561, #4584, #4649
+- `shelbykb2`: #3944, #4750, #4945, #4957
+- `Solthodox`: #5524, #5528, #6761, #6869
+- `TheHoracio`: #819, #848, #873, #2413
+- and 321 more PRs by 212 other authors
+
+### Claimed for 3+ hours without a PR
+
+Work here goes from claim to PR in minutes (median 6 minutes, 95% within 1.2 hours). At 6 hours without a PR the coordinator asks the claimer once; at **12 hours** without a PR, draft PR or `status:` line the claim lapses and the item goes back to Up for grabs, with a link to the earlier claimer's code if their fork has a branch for it. Holding more than 3 claims without a PR: while you're not active (no comment here and no PR opened or pushed for 3 hours), the claims past your 3 newest get one reminder at 3 hours and lapse at 6.
+
+TEST-527 `Jolymmiles` (27h), D3D-374 `kotorvr` (25h), TEST-1015 `iurysf` (17h), SHADER-846 `Kev-Ball` (16h), SHADER-915 `gertify` (11h), TEST-1172 `Desamodeth` (11h), SHADER-917 `gertify` (11h), BUILD-1654 `Vonsek` (11h), BUILD-1669 `reviewbd` (11h), BUILD-1672 `Desamodeth` (11h), D3D-545 `Hiiva` (11h), SHADER-930 `abnalstlll-byte` (11h), BUILD-1680 `Zunraz` (11h), ASSET-445 `eyyun` (11h), TEST-1185 `editrice` (11h), TEST-1186 `Desamodeth` (11h), SHADER-938 `gertify` (11h), BUILD-1694 `editrice` (11h), RT-404 `LAKSHYA-cmd-tech` (11h), TEST-1189 `Exopus-0x65f7ad0` (10h), RT-408 `editrice` (10h), BUILD-1708 `editrice` (10h), TEST-1193 `kaiffeetasse` (10h), BUILD-1723 `Zunraz` (10h), D3D-561 `ezwinxdlmao` (10h), and 603 more (see Open work)
+
+### How to help
+
+| You have | Start here |
+|---|---|
+| Any GPU, Windows or Linux | Build `runtime/` and run `runtime/test/shaders/build.py`, `check.py` and `scripts/run_gpu_tests.py` ([`CONTRIBUTING.md`](https://github.com/ItsNotRexed/Leonida/blob/main/CONTRIBUTING.md)). Post the result in #166, not as a new issue. If your GPU is already well covered there, testing an open PR from "Ready for review or a GPU test" helps more. No game files needed. |
+| C++ on Windows | A `RT-` (PE loader, shims) item, or a `D3D-` item: #313 lists the critical path and every D3D12 method that is still open. |
+| Shader / GPU / compiler knowledge | A `SHADER-` item, or claim a `FUZZ-` instruction family and fuzz it against the CPU checks in `tests/semantic`; post each finding here as a new item before fixing it. A new translator rule goes into the contract table in `docs/design.md`, with how it was confirmed. |
+| Python | `BUILD-` and `TEST-` items. Tests must run the repository's code (the translator or the tool), not a model written inside the test. |
+| Your own copy of the game | Corpus counts, the package-gated tests (`LEONIDA_GAME_DIR`) and `ASSET-` items. Run them on your machine and post only outcomes. |
+
+### Commands
+
+Write these at the start of a line in a comment here. The tables are updated from them. The tables include every comment up to [this one](https://github.com/ItsNotRexed/Leonida/issues/9522#issuecomment-7114406833). Before you claim, check the comments after it: someone may have claimed the item since.
+
+- `claiming: <ID or new item>` before you start. Check the tables and the open PRs first. A claim counts once posted, unless an earlier claim or open PR covers the item. Agents: read this issue's current body (not a cached copy) and run `gh pr list -R ItsNotRexed/Leonida --state all --search "<ID>"` before claiming; a merged PR means the item is done.
+- `status: <ID> <one line>` for progress, and to keep a claim alive (a claim with no draft PR and no `status:` for 12 hours lapses: the item goes back to Up for grabs with a link to your code). A draft PR keeps it too.
+- `blocked: <ID> by #N` when you wait on another PR, hardware or the game executable.
+- `releasing: <ID>` if you stop; `done: <ID> #PR` when the PR is up.
+- `finding: <one line>` for work you found but won't do yourself: a bug, a missing method, a stale doc, a follow-up of your own PR. Below that line: where (file and line), why it matters, and whether it needs game files or particular hardware. The coordinator checks it against existing items and PRs, then adds it to Up for grabs with your name on it.
+- In the PR: `Depends on: #N` for every PR yours builds on or conflicts with, and `Fixes #N` for the issue it fixes.
+
+### Open work
+
+#### Shader translator (RDNA2  SPIR-V) and its GPU checks
+
+SHADER-827 `MKS2508` ú SHADER-837 `MKS2508` ú SHADER-846 `Kev-Ball` ú SHADER-847 `aslan2142` ú SHADER-849 `SashaTun` ú SHADER-856 `aslan2142` ú SHADER-871 `aslan2142` ú SHADER-899 `emirduran707` ú SHADER-915 `gertify` ú SHADER-917 `gertify` ú SHADER-930 `abnalstlll-byte` ú SHADER-938 `gertify` ú SHADER-957 `Vonsek` ú SHADER-1011 `gertify` ú SHADER-1018 `TreXito` ú SHADER-1019 `LouisRiverstone` ú SHADER-1035 `TinkerBell-90` ú SHADER-1047 `TreXito` ú SHADER-1050 `FIocker` ú SHADER-1055 `nullmarsh` ú SHADER-1060 `Stalkerino` ú SHADER-1071 `Abdallahadel2004` ú SHADER-1074 `Racurs156` ú SHADER-1079 `TreXito` ú SHADER-1083 `kapitche` ú SHADER-1093 `TG0000` ú SHADER-1104 `damianir320` ú SHADER-1108 `quackottu` ú SHADER-1112 `Tymon3310` ú SHADER-1114 `bobcatchris` ú SHADER-1117 `bobcatchris` ú SHADER-1122 `Arkex-ai` ú SHADER-1130 `gabrielsteglich` ú SHADER-1134 `illusionart453-max` ú SHADER-1148 `nonverifiedperson` ú SHADER-1159 `aslan2142` ú SHADER-1160 `mateusrez` ú SHADER-1167 `illusionart453-max` ú SHADER-1177 `Joaco9020` ú SHADER-1179 `Ryx69` ú SHADER-1182 `pes7` ú SHADER-1183 `pes7` ú SHADER-1185 `pes7` ú SHADER-1186 `pes7` ú SHADER-1190 `quackottu` ú SHADER-1191 `Amzi-01` ú SHADER-1192 `Amzi-01` ú SHADER-1205 `Kosmabb8` ú SHADER-1206 `Kosmabb8` ú SHADER-1207 `Kosmabb8` ú SHADER-1209 `illusionart453-max` ú SHADER-1210 `ezbyDev` ú SHADER-1211 `LukeOsland1` ú SHADER-1212 `Vadson159` ú SHADER-1219 `bobcatchris` ú SHADER-1220 `Vadson159` ú SHADER-1225 `Daiguol` ú SHADER-1226 `best2135` ú SHADER-1233 `AntoninMichelq` ú SHADER-1234 `bobcatchris` ú SHADER-1235 `evilclanker9000` ú SHADER-1242 `bobcatchris` ú SHADER-1261 `LukeOsland1` ú SHADER-1262 `EdwardHuybrechts` ú SHADER-1267 `etty8080` ú SHADER-1271 `limpan1212` ú SHADER-1277 `rideinstead` ú SHADER-1282 `ismailchaka1` ú SHADER-1283 `Vadson159` ú SHADER-1285 `Faterek` ú SHADER-1296 `cryptocxeq` ú SHADER-1297 `evilclanker9000` ú SHADER-1309 `LAKSHYA-cmd-tech` ú SHADER-1312 `coenflict` ú SHADER-1314 `claudetools-gh` ú SHADER-1316 `Joaco9020` ú SHADER-1319 `Courdetenis` ú SHADER-1326 `gut0to` ú SHADER-1330 `Joaco9020` ú SHADER-1335 `DatGuyShorty` ú SHADER-1338 `draggygaggy-maker` ú SHADER-1348 `Joaco9020` ú SHADER-1349 `Pablo-Barros` ú SHADER-1360 `tedin7` ú SHADER-1370 `boazvdwansem` ú SHADER-1371 `LukeOsland1` ú SHADER-1372 `paratustra` ú SHADER-1374 `fiestorra` ú SHADER-1375 `Friendships6666` ú SHADER-1379 `Joaco9020` ú SHADER-1380 `adamraskin` ú SHADER-1381 `morodirule` ú SHADER-1382 `LukeOsland1` ú SHADER-1385 `morodirule` ú SHADER-1387 `morodirule` ú SHADER-1390 `hajduzsolt` ú SHADER-1391 `NRXM` ú SHADER-1392 `not-rex` ú SHADER-1397 `Kosmabb8` ú SHADER-1398 `tunczzz` ú SHADER-1406 `Jokiblack` ú SHADER-1408 `LukeOsland1` ú SHADER-1409 `Joaco9020` ú SHADER-1410 `throny` ú SHADER-1411 `fengyansama` ú SHADER-1412 `evilclanker9000` ú SHADER-1413 `Tortoche` ú SHADER-1414 `xDeadXD`
+
+Plus 722 with a PR (see the review and rebase lists above).
+
+#### Translator correctness, one instruction family per fuzzer (claim a family before fuzzing it)
+
+FUZZ-64 `aslan2142` ú FUZZ-67 `TreXito` ú FUZZ-72 `KubickNubick` ú FUZZ-78 `DeSunShine` ú FUZZ-85 `bvtterbroot` ú FUZZ-94 `Ch1mpleo` ú FUZZ-101 `r1x0s` ú FUZZ-104 `r1x0s` ú FUZZ-111 `WebIdentity1` ú FUZZ-112 `WebIdentity1`
+
+Plus 46 with a PR (see the review and rebase lists above).
+
+#### Runtime: PE loader, shims, the package's own DLLs as tests
+
+RT-352 `aslan2142` ú RT-388 `throny` ú RT-391 `aslan2142` ú RT-404 `LAKSHYA-cmd-tech` ú RT-408 `editrice` ú RT-424 `editrice` ú RT-442 `Desamodeth` ú RT-445 `Desamodeth` ú RT-456 `evilclanker9000` ú RT-457 `Creaa` ú RT-462 `l-CatDemon-l` ú RT-466 `milas6669` ú RT-482 `kapitche` ú RT-483 `Etoile-Bleu` ú RT-485 `Etoile-Bleu` ú RT-487 `Etoile-Bleu` ú RT-495 `Hiiva` ú RT-497 `Hiiva` ú RT-507 `joelh12` ú RT-508 `TreXito` ú RT-526 `Pipodi` ú RT-528 `Tian-que` ú RT-530 `465d6a0eac` ú RT-538 `ramenbellic` ú RT-540 `neeshz` ú RT-544 `tedin7` ú RT-545 `illusionart453-max` ú RT-549 `gookie-dev` ú RT-552 `oVolkra` ú RT-558 `illusionart453-max` ú RT-560 `neeshz` ú RT-574 `aslan2142` ú RT-577 `tedin7` ú RT-586 `tibzejoker` ú RT-589 `JohannFaust666` ú RT-592 `Desamodeth` ú RT-597 `AirKyzzZ` ú RT-603 `romainveurrier` ú RT-607 `Pipodi` ú RT-610 `hcristosm` ú RT-611 `Desamodeth` ú RT-613 `xhqss` ú RT-615 `Zmirzz` ú RT-618 `digitalsurgeon` ú RT-621 `AirKyzzZ` ú RT-625 `AlexLopezDevelop` ú RT-626 `KarolKurzyna` ú RT-631 `hcristosm` ú RT-638 `Desamodeth` ú RT-641 `Spacecer2` ú RT-653 `KevinPratap` ú RT-655 `etcetera-yt` ú RT-658 `tedin7` ú RT-660 `Desamodeth` ú RT-662 `HungLe17` ú RT-665 `glitterfartz` ú RT-674 `F1auct` ú RT-679 `dotaku22` ú RT-682 `lucas-tafuri` ú RT-698 `Barbital11111` ú RT-711 `AirKyzzZ` ú RT-717 `anasssssssss1` ú RT-720 `fever308` ú RT-725 `anasssssssss1` ú RT-726 `tedin7` ú RT-737 `zebraso` ú RT-741 `nurtrino` ú RT-752 `wavehs` ú RT-765 `bobcatchris` ú RT-767 `tedin7` ú RT-769 `dev-ewann` ú RT-772 `jeremygold02` ú RT-779 `F1auct` ú RT-785 `tedin7` ú RT-802 `jgrizon` ú RT-809 `aslan2142` ú RT-815 `tedin7` ú RT-817 `wavehs` ú RT-822 `auswhalen999-debug` ú RT-823 `AirKyzzZ` ú RT-824 `Cresceda` ú RT-825 `Racurs156` ú RT-827 `Christopher-Sundeby` ú RT-828 `Courdetenis` ú RT-829 `NolanCotter` ú RT-830 `Courdetenis` ú RT-831 `Courdetenis` ú RT-838 `aapolipponen` ú RT-841 `AwkGrep256` ú RT-844 `Pipodi` ú RT-846 `Raxstreams` ú RT-855 `Cresceda` ú RT-859 `joroyt` ú RT-860 `serozr` ú RT-877 `AirKyzzZ` ú RT-878 `AirKyzzZ` ú RT-882 `jeremygold02` ú RT-890 `YaBulochka` ú RT-892 `milas6669` ú RT-895 `LaugeM` ú RT-897 `svds12343` ú RT-898 `milas6669` ú RT-900 `milas6669` ú RT-901 `Cryptoteep` ú RT-907 `agulerman` ú RT-910 `BastienRodz` ú RT-911 `YoGoUrT20` ú RT-915 `aidity` ú RT-921 `Hussein5645` ú RT-922 `milas6669` ú RT-926 `evilclanker9000` ú RT-928 `evilclanker9000` ú RT-934 `Tortoche` ú RT-935 `milas6669` ú RT-938 `Tortoche` ú RT-940 `Tortoche` ú RT-944 `Tortoche` ú RT-945 `Tortoche` ú RT-949 `sh1shu1` ú RT-950 `iliassgm` ú RT-951 `Jokiblack` ú RT-953 `Tortoche` ú RT-954 `oeirughrepuiohg`
+
+Plus 567 with a PR (see the review and rebase lists above).
+
+#### Xbox D3D12  Vulkan ([plan and milestones](https://github.com/ItsNotRexed/Leonida/blob/main/docs/d3d12_vulkan.md))
+
+664 items in progress, tracked in #313: the critical path, who builds what, and which D3D12 methods are still open.
+
+#### Assets and formats: models, textures, audio, movies, archives
+
+ASSET-19 `ThatBranModding` (waits for breadbbbb:) ú ASSET-445 `eyyun` ú ASSET-489 `LocranKing` ú ASSET-509 `Flyander` ú ASSET-525 `abilliontokens` ú ASSET-532 `TG0000` ú ASSET-563 `HollowMisty` ú ASSET-580 `sanchaton` ú ASSET-590 `lukacpp` ú ASSET-591 `kacper-serewis` ú ASSET-594 `evilclanker9000` ú ASSET-595 `cherryinbubbles-ops` ú ASSET-615 `TG0000` ú ASSET-616 `illusionart453-max` ú ASSET-617 `aslan2142` ú ASSET-618 `dracbat` ú ASSET-627 `TripleJ160` ú ASSET-629 `jimokulou2-ops` ú ASSET-632 `dracbat` ú ASSET-633 `LukeOsland1` ú ASSET-639 `Daiguol` ú ASSET-641 `LukeOsland1` ú ASSET-642 `evilclanker9000` ú ASSET-643 `evilclanker9000` ú ASSET-648 `bobczan` ú ASSET-649 `r1x0s` ú ASSET-651 `jeremygold02` ú ASSET-654 `jeremygold02` ú ASSET-655 `danzig666` ú ASSET-657 `LAKSHYA-cmd-tech` ú ASSET-660 `TG0000` ú ASSET-683 `LukeOsland1` ú ASSET-686 `Zipettte` ú ASSET-692 `flexo-112` ú ASSET-695 `Grimkeh` ú ASSET-696 `Tortoche` ú ASSET-697 `Tortoche` ú ASSET-698 `Youssefrah16`
+
+Plus 280 with a PR (see the review and rebase lists above).
+
+#### Build pipeline (`make_game.py`, `tools/`)
+
+BUILD-875 `aslan2142` ú BUILD-1376 `hmodymac8-droid` ú BUILD-1405 `gurvancampion` ú BUILD-1414 `Schlagobert93` ú BUILD-1448 `T-Crypt` ú BUILD-1483 `catminou4` ú BUILD-1487 `Digit4w` ú BUILD-1654 `Vonsek` ú BUILD-1669 `reviewbd` ú BUILD-1672 `Desamodeth` ú BUILD-1680 `Zunraz` ú BUILD-1694 `editrice` ú BUILD-1708 `editrice` ú BUILD-1723 `Zunraz` ú BUILD-1729 `Desamodeth` ú BUILD-1755 `Zunraz` ú BUILD-1850 `cynbun` ú BUILD-1854 `cynbun` ú BUILD-1873 `editrice` ú BUILD-1886 `cynbun` ú BUILD-1890 `editrice` ú BUILD-1897 `cynbun` ú BUILD-1905 `Dom-in` ú BUILD-1913 `milas6669` ú BUILD-1965 `Raptor2012` ú BUILD-1968 `kapitche` ú BUILD-1973 `evilclanker9000` ú BUILD-1984 `Kilichi` ú BUILD-1986 `Desamodeth` ú BUILD-1991 `fishingpvalues` ú BUILD-2001 `Stalkerino` ú BUILD-2015 `Flyander` ú BUILD-2022 `Desamodeth` ú BUILD-2027 `erickbobd` ú BUILD-2028 `LAKSHYA-cmd-tech` ú BUILD-2043 `cynbun` ú BUILD-2047 `kirigayakazima` ú BUILD-2048 `LAKSHYA-cmd-tech` ú BUILD-2056 `Bhrema` ú BUILD-2058 `kirigayakazima` ú BUILD-2060 `Flyander` ú BUILD-2070 `evilclanker9000` ú BUILD-2086 `Hiiva` ú BUILD-2097 `dukefissura` ú BUILD-2105 `Flyander` ú BUILD-2110 `LAKSHYA-cmd-tech` ú BUILD-2112 `Razdva122` ú BUILD-2120 `TheHoracio` ú BUILD-2121 `Flyander` ú BUILD-2125 `kirigayakazima` ú BUILD-2126 `Hiiva` ú BUILD-2137 `Bhrema` ú BUILD-2146 `evilclanker9000` ú BUILD-2158 `GeremC` ú BUILD-2159 `SirKingg` ú BUILD-2165 `Halfect` ú BUILD-2167 `evilclanker9000` ú BUILD-2185 `Hiiva` ú BUILD-2194 `LAKSHYA-cmd-tech` ú BUILD-2196 `milas6669` ú BUILD-2203 `evilclanker9000` ú BUILD-2229 `Abdallahadel2004` ú BUILD-2252 `Hiiva` ú BUILD-2283 `david-x3d` ú BUILD-2311 `Hiiva` ú BUILD-2341 `evilclanker9000` ú BUILD-2356 `Solthodox` ú BUILD-2372 `Hiiva` ú BUILD-2399 `Hiiva` ú BUILD-2408 `evilclanker9000` ú BUILD-2411 `Solthodox` ú BUILD-2415 `aidity` ú BUILD-2416 `Solthodox` ú BUILD-2417 `undeadhuman37` ú BUILD-2428 `HansBullet` ú BUILD-2443 `TobiasFriedrich00` ú BUILD-2457 `Hiiva` ú BUILD-2458 `evilclanker9000` ú BUILD-2461 `Tymon3310` ú BUILD-2466 `ezbyDev` ú BUILD-2470 `evilclanker9000` ú BUILD-2472 `evilclanker9000` ú BUILD-2478 `etcetera-yt` ú BUILD-2486 `Racurs156` ú BUILD-2490 `Doffi4` ú BUILD-2499 `whattheflop` ú BUILD-2501 `kapitche` ú BUILD-2502 `kett1m` ú BUILD-2505 `mrp1no` ú BUILD-2508 `tedin7` ú BUILD-2514 `bobcatchris` ú BUILD-2515 `KarolKurzyna` ú BUILD-2516 `Arkex-ai` ú BUILD-2520 `tupacfan04` ú BUILD-2521 `mrp1no` ú BUILD-2522 `xelerb-debug` ú BUILD-2525 `jordi-vancuijlenborg-vinci` ú BUILD-2526 `Racurs156` ú BUILD-2533 `whattheflop` ú BUILD-2535 `Arkex-ai` ú BUILD-2538 `illusionart453-max` ú BUILD-2545 `illusionart453-max` ú BUILD-2546 `LukeOsland1` ú BUILD-2550 `Essilu` ú BUILD-2552 `KiryaAfimin` ú BUILD-2556 `sperm` ú BUILD-2563 `aslan2142` ú BUILD-2565 `svds12343` ú BUILD-2569 `Etr0p` ú BUILD-2572 `svds12343` ú BUILD-2579 `aslan2142` ú BUILD-2580 `465d6a0eac` ú BUILD-2582 `465d6a0eac` ú BUILD-2588 `illusionart453-max` ú BUILD-2590 `Kassssssssy` ú BUILD-2592 `turn1p29` ú BUILD-2593 `illusionart453-max` ú BUILD-2597 `toeeshchaudhary` ú BUILD-2601 `illusionart453-max` ú BUILD-2608 `LukeOsland1` ú BUILD-2610 `illusionart453-max` ú BUILD-2618 `LukeOsland1` ú BUILD-2622 `bitzin-dev` ú BUILD-2625 `LukeOsland1` ú BUILD-2628 `LukeOsland1` ú BUILD-2631 `tibzejoker` ú BUILD-2632 `JohannFaust666` ú BUILD-2634 `TripleJ160` ú BUILD-2637 `illusionart453-max` ú BUILD-2640 `svds12343` ú BUILD-2658 `illusionart453-max` ú BUILD-2659 `aslan2142` ú BUILD-2670 `465d6a0eac` ú BUILD-2676 `illusionart453-max` ú BUILD-2680 `KarolKurzyna` ú BUILD-2688 `illusionart453-max` ú BUILD-2690 `space-de` ú BUILD-2693 `aslan2142` ú BUILD-2695 `illusionart453-max` ú BUILD-2697 `ABilenduke` ú BUILD-2701 `Ryx69` ú BUILD-2708 `Ryx69` ú BUILD-2709 `illusionart453-max` ú BUILD-2710 `JohannFaust666` ú BUILD-2713 `pes7` ú BUILD-2714 `pes7` ú BUILD-2715 `Etr0p` ú BUILD-2717 `aslan2142` ú BUILD-2718 `evilclanker9000` ú BUILD-2723 `pes7` ú BUILD-2724 `pes7` ú BUILD-2727 `lunarminus` ú BUILD-2736 `Joaco9020` ú BUILD-2743 `illusionart453-max` ú BUILD-2744 `rideinstead` ú BUILD-2745 `465d6a0eac` ú BUILD-2751 `svds12343` ú BUILD-2760 `illusionart453-max` ú BUILD-2775 `MKS2508` ú BUILD-2784 `aslan2142` ú BUILD-2788 `HungLe17` ú BUILD-2789 `HungLe17` ú BUILD-2798 `Barbital11111` ú BUILD-2801 `boesbo` ú BUILD-2806 `LukeOsland1` ú BUILD-2808 `465d6a0eac` ú BUILD-2809 `Racurs156` ú BUILD-2812 `Teerth1` ú BUILD-2815 `aslan2142` ú BUILD-2824 `aslan2142` ú BUILD-2826 `illusionart453-max` ú BUILD-2828 `moldyharriet` ú BUILD-2830 `wavehs` ú BUILD-2837 `LukeOsland1` ú BUILD-2842 `Ch1mpleo` ú BUILD-2843 `illusionart453-max` ú BUILD-2846 `wavehs` ú BUILD-2848 `Desamodeth` ú BUILD-2850 `wavehs` ú BUILD-2858 `tugasky` ú BUILD-2861 `cdomergue` ú BUILD-2864 `aslan2142` ú BUILD-2875 `space-de` ú BUILD-2883 `wavehs` ú BUILD-2890 `lucas-tafuri` ú BUILD-2893 `Daiguol` ú BUILD-2900 `Daiguol` ú BUILD-2901 `karearl` ú BUILD-2910 `Joaco9020` ú BUILD-2912 `wavehs` ú BUILD-2913 `boesbo` ú BUILD-2915 `Daiguol` ú BUILD-2919 `HungLe17` ú BUILD-2931 `lucasmartin042009-sudo` ú BUILD-2935 `BlazeXYZ` ú BUILD-2940 `evilclanker9000` ú BUILD-2941 `Jitheswar` ú BUILD-2943 `LukeOsland1` ú BUILD-2955 `alexwlsnr` ú BUILD-2958 `wavehs` ú BUILD-2962 `abnalstlll-byte` ú BUILD-2965 `Daiguol` ú BUILD-2966 `wavehs` ú BUILD-2973 `tiagonogueiraa-bit` ú BUILD-2978 `HAGerox` ú BUILD-2979 `wavehs` ú BUILD-2982 `Daiguol` ú BUILD-2989 `mohammadallami75-ops` ú BUILD-2993 `r1x0s` ú BUILD-2998 `Daiguol` ú BUILD-3000 `wavehs` ú BUILD-3007 `wavehs` ú BUILD-3010 `LukeOsland1` ú BUILD-3011 `WebIdentity1` ú BUILD-3014 `Daiguol` ú BUILD-3021 `Barbital11111` ú BUILD-3023 `aslan2142` ú BUILD-3025 `wavehs` ú BUILD-3026 `SpaghettiMaster545` ú BUILD-3027 `bobcatchris` ú BUILD-3033 `ruvenesh` ú BUILD-3034 `465d6a0eac` ú BUILD-3035 `cryptocxeq` ú BUILD-3039 `KarolKurzyna` ú BUILD-3043 `wavehs` ú BUILD-3044 `cryptocxeq` ú BUILD-3047 `bobcatchris` ú BUILD-3052 `wavehs` ú BUILD-3059 `aslan2142` ú BUILD-3062 `harrisotiropoulos-jpg` ú BUILD-3074 `Daiguol` ú BUILD-3075 `svds12343` ú BUILD-3077 `cryptocxeq` ú BUILD-3080 `KarolKurzyna` ú BUILD-3085 `josevictorp` ú BUILD-3087 `ibressan` ú BUILD-3089 `cryptocxeq` ú BUILD-3092 `Raxstreams` ú BUILD-3095 `TreXito` ú BUILD-3096 `wavehs` ú BUILD-3102 `wavehs` ú BUILD-3105 `evilclanker9000` ú BUILD-3107 `jeremygold02` ú BUILD-3108 `venetanji` ú BUILD-3109 `aslan2142` ú BUILD-3110 `wavehs` ú BUILD-3114 `wavehs` ú BUILD-3115 `r1x0s` ú BUILD-3116 `kett1m` ú BUILD-3118 `Bloh09` ú BUILD-3124 `wavehs` ú BUILD-3126 `Daiguol` ú BUILD-3127 `svds12343` ú BUILD-3128 `aslan2142` ú BUILD-3131 `evilclanker9000` ú BUILD-3132 `jackonick` ú BUILD-3136 `wavehs` ú BUILD-3137 `cryptocxeq` ú BUILD-3139 `Grimkeh` ú BUILD-3142 `wavehs` ú BUILD-3143 `Hiiva` ú BUILD-3150 `jeremygold02` ú BUILD-3151 `cryptocxeq` ú BUILD-3157 `etty8080` ú BUILD-3158 `Grimkeh` ú BUILD-3161 `Faterek` ú BUILD-3163 `wavehs` ú BUILD-3165 `wavehs` ú BUILD-3172 `wavehs` ú BUILD-3174 `Cannnabis` ú BUILD-3177 `wavehs` ú BUILD-3180 `jeremygold02` ú BUILD-3181 `Grimkeh` ú BUILD-3186 `tedin7` ú BUILD-3187 `tedin7` ú BUILD-3188 `SkippySteve` ú BUILD-3189 `etty8080` ú BUILD-3190 `aslan2142` ú BUILD-3195 `ASTROWwwW` ú BUILD-3197 `Grimkeh` ú BUILD-3198 `LukeOsland1` ú BUILD-3201 `Grimkeh` ú BUILD-3202 `etty8080` ú BUILD-3205 `T-Crypt` ú BUILD-3213 `Grimkeh` ú BUILD-3215 `DatGuyShorty` ú BUILD-3216 `Grimkeh` ú BUILD-3217 `gkissel` ú BUILD-3219 `smowlyy` ú BUILD-3225 `Grimkeh` ú BUILD-3226 `foxx1cs` ú BUILD-3232 `CourtyardGames` ú BUILD-3235 `Grimkeh` ú BUILD-3236 `etty8080` ú BUILD-3237 `LAKSHYA-cmd-tech` ú BUILD-3243 `Courdetenis` ú BUILD-3244 `Courdetenis` ú BUILD-3245 `Courdetenis` ú BUILD-3246 `Courdetenis` ú BUILD-3247 `Courdetenis` ú BUILD-3248 `Courdetenis` ú BUILD-3249 `Courdetenis` ú BUILD-3252 `Grimkeh` ú BUILD-3256 `Grimkeh` ú BUILD-3257 `Grimkeh` ú BUILD-3259 `Grimkeh` ú BUILD-3265 `Grimkeh` ú BUILD-3267 `Yoshi-OOF` ú BUILD-3269 `svds12343` ú BUILD-3272 `Grimkeh` ú BUILD-3273 `Grimkeh` ú BUILD-3278 `r1x0s` ú BUILD-3280 `Grimkeh` ú BUILD-3283 `NolanCotter` ú BUILD-3287 `Grimkeh` ú BUILD-3288 `Ty0x7` ú BUILD-3290 `Grimkeh` ú BUILD-3291 `LAKSHYA-cmd-tech` ú BUILD-3292 `Grimkeh` ú BUILD-3293 `rrrarrra9` ú BUILD-3295 `Grimkeh` ú BUILD-3303 `Grimkeh` ú BUILD-3304 `LAKSHYA-cmd-tech` ú BUILD-3306 `Grimkeh` ú BUILD-3313 `Grimkeh` ú BUILD-3316 `Grimkeh` ú BUILD-3321 `Grimkeh` ú BUILD-3322 `Grimkeh` ú BUILD-3331 `Grimkeh` ú BUILD-3337 `Grimkeh` ú BUILD-3338 `Raxstreams` ú BUILD-3340 `etty8080` ú BUILD-3343 `DeSunShine` ú BUILD-3346 `gut0to` ú BUILD-3347 `LAKSHYA-cmd-tech` ú BUILD-3348 `Grimkeh` ú BUILD-3360 `Grimkeh` ú BUILD-3361 `H0ozsed` ú BUILD-3365 `gut0to` ú BUILD-3366 `Grimkeh` ú BUILD-3369 `Joaco9020` ú BUILD-3371 `WebIdentity1` ú BUILD-3372 `Grimkeh` ú BUILD-3373 `Raxstreams` ú BUILD-3384 `aslan2142` ú BUILD-3393 `gut0to` ú BUILD-3398 `milas6669` ú BUILD-3403 `aslan2142` ú BUILD-3407 `blazerTweaks` ú BUILD-3408 `svds12343` ú BUILD-3410 `Fuwia` ú BUILD-3424 `marso006` ú BUILD-3429 `milas6669` ú BUILD-3432 `LAKSHYA-cmd-tech` ú BUILD-3438 `x3ero0` ú BUILD-3444 `Fuwia` ú BUILD-3446 `WebIdentity1` ú BUILD-3459 `Fuwia` ú BUILD-3460 `fiestorra` ú BUILD-3465 `Raxstreams` ú BUILD-3466 `Fuwia` ú BUILD-3470 `gut0to` ú BUILD-3480 `OlaiFG7` ú BUILD-3484 `LAKSHYA-cmd-tech` ú BUILD-3486 `trigger337` ú BUILD-3487 `Etr0p` ú BUILD-3488 `reqlay` ú BUILD-3502 `mek1212` ú BUILD-3507 `svds12343` ú BUILD-3508 `svds12343` ú BUILD-3510 `milas6669` ú BUILD-3518 `sodove` ú BUILD-3524 `LAKSHYA-cmd-tech` ú BUILD-3541 `OlaiFG7` ú BUILD-3543 `WebIdentity1` ú BUILD-3549 `Grimkeh` ú BUILD-3552 `Grimkeh` ú BUILD-3556 `Fuwia` ú BUILD-3562 `zwlucas` ú BUILD-3564 `Fuwia` ú BUILD-3571 `aslan2142` ú BUILD-3578 `Barbital11111` ú BUILD-3579 `OlaiFG7` ú BUILD-3582 `LAKSHYA-cmd-tech` ú BUILD-3585 `Grimkeh` ú BUILD-3587 `milas6669` ú BUILD-3589 `LukeOsland1` ú BUILD-3590 `aslan2142` ú BUILD-3598 `Grimkeh` ú BUILD-3599 `LukeOsland1` ú BUILD-3600 `milas6669` ú BUILD-3606 `Grimkeh` ú BUILD-3608 `OlaiFG7` ú BUILD-3609 `GustawMatuszewski` ú BUILD-3613 `LukeOsland1` ú BUILD-3616 `WebIdentity1` ú BUILD-3618 `Spacecer2` ú BUILD-3623 `Grimkeh` ú BUILD-3624 `sodove` ú BUILD-3625 `redpandabytes1` (GPU validation of #:) ú BUILD-3626 `Grimkeh` ú BUILD-3627 `slipperysquid` ú BUILD-3628 `svds12343` ú BUILD-3629 `Grimkeh` ú BUILD-3631 `LAKSHYA-cmd-tech` ú BUILD-3632 `OlaiFG7` ú BUILD-3633 `svds12343` ú BUILD-3634 `Grimkeh` ú BUILD-3635 `Grimkeh` ú BUILD-3636 `svds12343` ú BUILD-3637 `OlaiFG7` ú BUILD-3638 `svds12343` ú BUILD-3639 `LukeOsland1` ú BUILD-3640 `aslan2142` ú BUILD-3643 `Grimkeh` ú BUILD-3646 `evilclanker9000` ú BUILD-3648 `Grimkeh` ú BUILD-3651 `Grimkeh` ú BUILD-3653 `LAKSHYA-cmd-tech` ú BUILD-3654 `Grimkeh` ú BUILD-3655 `Grimkeh` ú BUILD-3656 `gut0to` ú BUILD-3661 `Grimkeh` ú BUILD-3662 `morodirule` ú BUILD-3664 `AAyberkU` ú BUILD-3667 `evano64` ú BUILD-3668 `LAKSHYA-cmd-tech` ú BUILD-3676 `kirbodev` ú BUILD-3678 `svds12343` ú BUILD-3679 `svds12343` ú BUILD-3680 `danzig666` ú BUILD-3681 `morodirule` ú BUILD-3684 `morodirule` ú BUILD-3685 `WebIdentity1` ú BUILD-3691 `xXToinouXx` ú BUILD-3693 `Grimkeh` ú BUILD-3696 `morodirule` ú BUILD-3697 `sodove` ú BUILD-3701 `Barbital11111` ú BUILD-3702 `Cryptoteep` ú BUILD-3703 `jamesn-xt` ú BUILD-3706 `Kiril-Donec` ú BUILD-3708 `svds12343` ú BUILD-3709 `svds12343` ú BUILD-3710 `Joaco9020` ú BUILD-3711 `svds12343` ú BUILD-3714 `LukeOsland1` ú BUILD-3715 `svds12343` ú BUILD-3719 `svds12343` ú BUILD-3720 `danzig666` ú BUILD-3723 `morodirule` ú BUILD-3734 `Diskuss` ú BUILD-3735 `BPHvZ` ú BUILD-3737 `samseppi` ú BUILD-3741 `milas6669` ú BUILD-3742 `NolanCotter` ú BUILD-3744 `morodirule` ú BUILD-3747 `WebIdentity1` ú BUILD-3749 `grebecq` ú BUILD-3753 `aslan2142` ú BUILD-3754 `sodove` ú BUILD-3756 `Zipettte` ú BUILD-3758 `morodirule` ú BUILD-3760 `felixpatriciorei` ú BUILD-3761 `danzig666` ú BUILD-3764 `RageGen` ú BUILD-3765 `Grimkeh` ú BUILD-3767 `LAKSHYA-cmd-tech` ú BUILD-3770 `svds12343` ú BUILD-3771 `svds12343` ú BUILD-3774 `svds12343` ú BUILD-3775 `jakewdr` ú BUILD-3778 `svds12343` ú BUILD-3779 `svds12343` ú BUILD-3786 `LukeOsland1` ú BUILD-3787 `NaokiSayajin` ú BUILD-3788 `sodove` ú BUILD-3790 `flexo-112` ú BUILD-3792 `danzig666` ú BUILD-3793 `WebIdentity1` ú BUILD-3796 `YaBulochka` ú BUILD-3798 `Grimkeh` ú BUILD-3799 `Gevroska` ú BUILD-3801 `LAKSHYA-cmd-tech` ú BUILD-3805 `Zipettte` ú BUILD-3808 `LukeOsland1` ú BUILD-3809 `illusionart453-max` ú BUILD-3811 `sodove` ú BUILD-3813 `broccolize` ú BUILD-3814 `LukeOsland1` ú BUILD-3815 `tibzejoker` ú BUILD-3817 `illusionart453-max` ú BUILD-3818 `BPHvZ` ú BUILD-3819 `Jokiblack` ú BUILD-3820 `Joaco9020` ú BUILD-3821 `sodove` ú BUILD-3822 `danzig666` ú BUILD-3823 `GustawMatuszewski` ú BUILD-3824 `illusionart453-max` ú BUILD-3826 `Barbital11111` ú BUILD-3827 `Zipettte` ú BUILD-3828 `Jokiblack` ú BUILD-3830 `LAKSHYA-cmd-tech` ú BUILD-3832 `evilclanker9000` ú BUILD-3842 `sodove` ú BUILD-3843 `Jokiblack` ú BUILD-3847 `dereoalex` ú BUILD-3848 `BPHvZ` ú BUILD-3850 `milas6669` ú BUILD-3855 `nova-aryan` ú BUILD-3856 `Jokiblack` ú BUILD-3857 `draggygaggy-maker` ú BUILD-3858 `sodove` ú BUILD-3860 `cooooooto` ú BUILD-3861 `Youssefrah16` ú BUILD-3865 `milas6669` ú BUILD-3866 `MarcPique` ú BUILD-3867 `Tortoche` ú BUILD-3868 `samseppi` ú BUILD-3869 `Tortoche` ú BUILD-3870 `Gevroska` ú BUILD-3871 `GustawMatuszewski` ú BUILD-3873 `aslan2142` ú BUILD-3874 `aslan2142` ú BUILD-3875 `danzig666` ú BUILD-3877 `LukeOsland1` ú BUILD-3878 `illusionart453-max` ú BUILD-3879 `aslan2142` ú BUILD-3880 `danzig666`
+
+Plus 1796 with a PR (see the review and rebase lists above).
+
+#### Tests, test runners and CI
+
+TEST-305 `iurysf` ú TEST-527 `Jolymmiles` ú TEST-609 `boraswim` ú TEST-1015 `iurysf` ú TEST-1024 `Etr0p` ú TEST-1038 `slint6614-dev` ú TEST-1052 `aslan2142` ú TEST-1058 `Spacecer2` ú TEST-1071 `YordiLorenzo` ú TEST-1090 `S1m0ne1997` ú TEST-1112 `WebIdentity1` ú TEST-1114 `catminou4` ú TEST-1125 `Grimkeh` ú TEST-1172 `Desamodeth` ú TEST-1185 `editrice` ú TEST-1186 `Desamodeth` ú TEST-1189 `Exopus-0x65f7ad0` ú TEST-1193 `kaiffeetasse` ú TEST-1266 `RedMiS7` ú TEST-1287 `SuperCraft3M` (released by `borasw`:) ú TEST-1288 `LAKSHYA-cmd-tech` ú TEST-1314 `LAKSHYA-cmd-tech` ú TEST-1335 `gahitchi` ú TEST-1365 `LAKSHYA-cmd-tech` ú TEST-1366 `autowert66` ú TEST-1369 `zarkovkirill1-alt` ú TEST-1370 `LuvAbyss` ú TEST-1373 `LAKSHYA-cmd-tech` ú TEST-1374 `jewmaster1337` ú TEST-1375 `LAKSHYA-cmd-tech` ú TEST-1387 `LAKSHYA-cmd-tech` ú TEST-1404 `LAKSHYA-cmd-tech` ú TEST-1412 `LAKSHYA-cmd-tech` ú TEST-1424 `gertify` ú TEST-1444 `Raptor2012` ú TEST-1471 `LAKSHYA-cmd-tech` ú TEST-1472 `Raptor2012` ú TEST-1498 `flapwarp` ú TEST-1500 `Flyander` ú TEST-1510 `SirKingg` ú TEST-1518 `Exopus-0x65f7ad0` ú TEST-1519 `TinkerBell-90` ú TEST-1523 `jaybeebabageyus` ú TEST-1532 `devnull34` ú TEST-1540 `Hiiva` ú TEST-1547 `TinkerBell-90` ú TEST-1550 `milas6669` ú TEST-1554 `BBareth` ú TEST-1555 `IISKII1` ú TEST-1556 `DoubleD17` ú TEST-1571 `evilclanker9000` ú TEST-1579 `VibeClauding` ú TEST-1597 `Barbital11111` ú TEST-1604 `cherryinbubbles-ops` ú TEST-1606 `BBareth` ú TEST-1612 `Essilu` ú TEST-1613 `mrp1no` ú TEST-1620 `tedin7` ú TEST-1621 `Arkex-ai` ú TEST-1628 `aslan2142` ú TEST-1631 `soldsawn` ú TEST-1632 `soldsawn` ú TEST-1633 `soldsawn` ú TEST-1634 `tedin7` ú TEST-1635 `tedin7` ú TEST-1636 `kingzzim7-create` ú TEST-1640 `Razuri0` ú TEST-1644 `465d6a0eac` ú TEST-1645 `illusionart453-max` ú TEST-1647 `frnandoooo` ú TEST-1650 `KiryaAfimin` ú TEST-1651 `illusionart453-max` ú TEST-1653 `illusionart453-max` ú TEST-1659 `illusionart453-max` ú TEST-1665 `illusionart453-max` ú TEST-1667 `illusionart453-max` ú TEST-1670 `illusionart453-max` ú TEST-1671 `Prethish-Kumar` ú TEST-1672 `rscriptsfivem` ú TEST-1674 `jtrudeau1530` ú TEST-1675 `illusionart453-max` ú TEST-1677 `LukeOsland1` ú TEST-1679 `Kassssssssy` ú TEST-1687 `illusionart453-max` ú TEST-1689 `soldsawn` ú TEST-1691 `illusionart453-max` ú TEST-1693 `illusionart453-max` ú TEST-1701 `etcetera-yt` ú TEST-1711 `miniongk` ú TEST-1712 `aslan2142` ú TEST-1721 `Ryx69` ú TEST-1726 `limpan1212` ú TEST-1731 `rwframe1` ú TEST-1734 `kormocicsaba` ú TEST-1735 `evilclanker9000` ú TEST-1737 `evilclanker9000` ú TEST-1738 `memphis19888-glitch` ú TEST-1743 `Joaco9020` ú TEST-1749 `alexwlsnr` ú TEST-1755 `bobcatchris` ú TEST-1756 `fearkov` ú TEST-1761 `fearkov` ú TEST-1763 `bobcatchris` ú TEST-1772 `space-de` ú TEST-1776 `svds12343` ú TEST-1778 `RAINighty` ú TEST-1780 `Friendships6666` ú TEST-1781 `Spacecer2` ú TEST-1785 `paratustra` ú TEST-1791 `quackottu` ú TEST-1795 `dotaku22` ú TEST-1796 `mohammadallami75-ops` ú TEST-1801 `evilclanker9000` ú TEST-1803 `Kerwinss` ú TEST-1805 `evilclanker9000` ú TEST-1806 `Friendships6666` ú TEST-1807 `LukeOsland1` ú TEST-1810 `Zhenyettta` ú TEST-1811 `DeSunShine` ú TEST-1812 `jmorrison102-dev` ú TEST-1815 `harrisotiropoulos-jpg` ú TEST-1830 `Daiguol` ú TEST-1832 `ne1i` ú TEST-1833 `lucas-tafuri` ú TEST-1834 `katherinebytes` ú TEST-1835 `Barbital11111` ú TEST-1839 `BlazeXYZ` ú TEST-1848 `WebIdentity1` ú TEST-1851 `casper64114` ú TEST-1855 `draggygaggy-maker` ú TEST-1857 `cryptocxeq` ú TEST-1860 `cryptocxeq` ú TEST-1863 `katherinebytes` ú TEST-1868 `Raxstreams` ú TEST-1870 `Desamodeth` ú TEST-1872 `mpea3` ú TEST-1873 `flaqueeee` ú TEST-1876 `Daiguol` ú TEST-1877 `cryptocxeq` ú TEST-1879 `WebIdentity1` ú TEST-1894 `Cryptoteep` ú TEST-1900 `cryptocxeq` ú TEST-1907 `LAKSHYA-cmd-tech` ú TEST-1911 `cryptocxeq` ú TEST-1912 `RAINighty` ú TEST-1913 `gut0to` ú TEST-1914 `Grimkeh` ú TEST-1918 `Skyloq` ú TEST-1921 `gut0to` ú TEST-1923 `YordiLorenzo` ú TEST-1926 `lucasmartin042009-sudo` ú TEST-1927 `GustawMatuszewski` ú TEST-1936 `KevinPratap` ú TEST-1941 `GonZiin` ú TEST-1943 `jeremygold02` ú TEST-1944 `gut0to` ú TEST-1946 `BlazeXYZ` ú TEST-1947 `Cryptoteep` ú TEST-1948 `gut0to` ú TEST-1957 `gut0to` ú TEST-1965 `LAKSHYA-cmd-tech` ú TEST-1969 `mateusrez` ú TEST-1972 `SpaghettiMaster545` ú TEST-1976 `coenflict` ú TEST-1977 `lucasmartin042009-sudo` ú TEST-1983 `foxx1cs` ú TEST-1987 `sodove` ú TEST-1992 `Cryptoteep` ú TEST-1993 `Ty0x7` ú TEST-1994 `KarloZ7715` ú TEST-1995 `svds12343` ú TEST-1998 `Pablo-Barros` ú TEST-1999 `marso006` ú TEST-2002 `Fuwia` ú TEST-2004 `Fuwia` ú TEST-2011 `danzig666` ú TEST-2016 `LukeOsland1` ú TEST-2019 `ZUKETEBO` ú TEST-2020 `KoLolX3` ú TEST-2021 `danzig666` ú TEST-2022 `adamraskin` ú TEST-2029 `svds12343` ú TEST-2032 `flexo-112` ú TEST-2035 `illusionart453-max` ú TEST-2038 `milas6669` ú TEST-2039 `danzig666` ú TEST-2040 `yellowcooln` ú TEST-2043 `lucasmartin042009-sudo` ú TEST-2044 `danzig666` ú TEST-2046 `Jokiblack` ú TEST-2050 `illusionart453-max` ú TEST-2051 `hamdog0203` ú TEST-2053 `SkippySteve` ú TEST-2054 `mynzjerko` ú TEST-2055 `DoubleD17` ú TEST-2056 `BPHvZ`
+
+Plus 1073 with a PR (see the review and rebase lists above).
+
+#### Process and contributor docs
+
+PROC-278 `LAKSHYA-cmd-tech` ú PROC-342 `evilclanker9000` ú PROC-347 `evilclanker9000` ú PROC-375 `Solthodox` ú PROC-376 `Etoile-Bleu` ú PROC-379 `evilclanker9000` ú PROC-406 `illusionart453-max` ú PROC-412 `Barbital11111` ú PROC-420 `evilclanker9000` ú PROC-423 `LukeOsland1` ú PROC-425 `evilclanker9000` ú PROC-428 `Silliana` ú PROC-429 `Silliana` ú PROC-431 `kykifox1337-source` ú PROC-437 `bobcatchris` ú PROC-438 `PedroHRamos` ú PROC-439 `evilclanker9000` ú PROC-441 `bobcatchris` ú PROC-442 `RealCaCl2` ú PROC-445 `bobcatchris` ú PROC-448 `bobcatchris` ú PROC-451 `auswhalen999-debug` ú PROC-460 `aslan2142` ú PROC-464 `mikebuckets171` ú PROC-471 `Nikpar005` ú PROC-473 `aslan2142` ú PROC-478 `serozr` ú PROC-481 `lucasmartin042009-sudo` ú PROC-482 `serozr` ú PROC-485 `GustawMatuszewski` ú PROC-489 `Stephan2620` ú PROC-492 `serozr` ú PROC-493 `gut0to` ú PROC-497 `aslan2142` ú PROC-504 `milas6669` ú PROC-513 `itzzflamee` ú PROC-518 `douline` ú PROC-525 `LaugeM` ú PROC-530 `HQasper` ú PROC-532 `Zipettte` ú PROC-539 `HQasper`
+
+Plus 290 with a PR (see the review and rebase lists above).
+
+Recently done: PROC-368 (#6713 merged), PROC-370 (#6716 merged), PROC-372 (#6818 merged), PROC-373 (#6811 merged), PROC-374 (#6826 merged), PROC-377 (#6852 merged), PROC-378 (#6904 merged), PROC-410 ()
+
+### Several PRs for one issue
+
+Open PRs (or fork branches) that fix the same issue. Please compare notes in the issue before both continue; the maintainer picks.
+
+- #4330: #4349, #7994
+- #4922: #4941, #9099
+- #5519: #5546, #7978
+- #5521: #5563, #5775
+- #5516: #5599, #5775
+- #5600: #5653, #5649, #5863, #7943
+- #5517: #5775, #7978
+- #8179: #8245, #8242, #9075
+- #7524: T-Crypt:forge/boot-best, T-Crypt:forge/boot-intel, T-Crypt:forge/enx-main-snapshot, T-Crypt:forge/integration, sovljanskii:forge-mesh-signature
+
+### Merge chains
+
+Open PRs that build on or conflict with each other, in merge order, left to right: each PR comes after the ones it depends on (from `Depends on` lines and agreements here):
+
+- #2231  #293  #4794  #3900
+- #615  #663  #4077  #4104  #4134  #4241  #4909  #4930  #4947
+- #873  #4550  #5939
+- #1096  #5291
+- #1482  #4676
+- #1646  #7381
+- #1839  #2075
+- #1845  #4641
+- #1865  #2077
+- #1970  #2198
+- #2038  #2323  #2786
+- #2060  #2443  #4106
+- #2086  #4670  #4913  #5123  #5199
+- #2124  #3777  #4408  #4809  #4236  #4815  #6241  #5072  #5651
+- #2206  #2544
+- #2366  #5923
+- #2385  #2715
+- #2402  #2752
+- #2413  #2939
+- #2415  #2455  #2546
+- #2463  #2986
+- #2470  #2651
+- #3390  #3601  #4531  #6709  #6953  #6964  #7021  #7052  #7066  #7180  #7286  #7527  #7556  #7584  #7685  #7746  #8121  #5253  #7075  #7078  #7218  #7235  #7652  #8270  #8831  #8942  #9166  #7110  #7924  #8134  #8225  #8304  #8455  #8506  #9320  #7240  #7679  #8557  #9045  #9068  #9137  #9379  #7411  #2490  #7076  #7880  #9229
+- #2528  #5121  #7255
+- #2676  #2981  #3013  #3167  #3106
+- #2723  #6142  #9064
+- #2783  #4722
+- #2827  #2955
+- #2906  #4251
+- #2928  #2969
+- #2956  #4769
+- #2980  #3067
+- #2998  #5784
+- #3869  #3014
+- #3019  #4231  #4610  #4745  #4826  #4878  #4884
+- #3086  #3302
+- #3293  #3481  #4107  #4224  #4663  #8101  #4577  #4725  #4740  #4756  #5314  #4817  #6948  #8454
+- #3298  #3382
+- #3468  #7223  #8156
+- #3489  #3532
+- #3544  #6096
+- #3589  #3676
+- #3598  #3687  #5283
+- #3606  #5396
+- #3642  #3791
+- #5586  #7018  #3665  #7312
+- #3751  #5843
+- #3765  #7248  #8574
+- #3771  #5782
+- #3775  #4821
+- #4687  #5674  #7997  #3823  #6102  #8028
+- #3856  #9310
+- #3867  #8879
+- #3879  #4703  #4754  #4977  #7744  #8087
+- #3898  #4309  #4642  #4772  #4847  #5678  #6373  #6458  #6501
+- #3914  #4234
+- #3930  #3965
+- #3944  #4494  #4640  #7771  #7773
+- #3984  #8351
+- #4011  #5092  #8155
+- #4012  #4461  #4488  #4779
+- #4041  #5040
+- #4092  #5255  #9236
+- #4119  #4436  #4906  #5830  #6008  #6009  #6012
+- #4121  #4149  #4201
+- #4136  #5055  #5383
+- #4139  #7640
+- #4155  #5198  #5235  #6157
+- #4203  #6041
+- #4210  #4267  #4447  #4588  #4843  #6190  #7104  #7573  #7980  #8334  #9318
+- #4233  #6270
+- #4247  #6030
+- #4296  #4390
+- #4321  #7097  #7370  #8154
+- #4355  #5608
+- #4359  #4446
+- #4362  #4841  #5026  #5390  #7452
+- #4373  #4630
+- #4398  #4684
+- #4426  #8205
+- #4459  #7310
+- #4462  #5286  #4691  #7121
+- #4475  #7342  #8187  #8457  #8746
+- #4493  #4581
+- #4536  #6403  #6443
+- #4540  #8663
+- #4565  #5528
+- #4607  #5052  #9304
+- #4621  #4965  #5187
+- #4656  #4870
+- #5000  #4682
+- #4686  #4892  #5970
+- #4693  #5474
+- #4695  #7447
+- #4707  #8307
+- #4774  #5714  #4849  #6011
+- #4777  #5125
+- #4782  #5195
+- #4820  #4863  #4865  #4898  #4869  #4871  #4873  #5093  #5095  #5096  #5097  #5098  #5099  #5117  #5185
+- #4834  #4851  #6025  #6516  #6967
+- #4861  #7144
+- #4912  #8893
+- #4946  #4980  #5067
+- #4950  #4987
+- #4960  #5940
+- #4971  #6200
+- #4972  #5525
+- #4973  #9381
+- #4974  #5126  #5950
+- #4992  #9409
+- #4996  #5010  #5027  #5160
+- #4999  #6990  #5139  #5171  #7006
+- #5017  #5083
+- #5039  #5074
+- #5043  #5084
+- #5053  #5076
+- #5057  #8086  #8679  #8860  #8103  #8687  #9150
+- #5063  #9270
+- #5085  #5130
+- #5089  #5141  #5238
+- #5116  #5303  #6109
+- #5142  #6132
+- #5153  #5690
+- #5164  #5952
+- #5207  #5342  #5717  #5945  #6082
+- #5211  #6031
+- #5234  #5354
+- #5246  #6093
+- #5247  #7508
+- #5250  #5385
+- #5259  #9221
+- #5270  #5702
+- #5279  #5319
+- #5300  #5404
+- #5310  #5479
+- #5329  #5783  #6996
+- #5335  #8009
+- #5378  #5381
+- #5425  #5489  #5616  #9353  #5537
+- #5449  #6376  #7795
+- #5518  #6007  #6780
+- #5576  #7829  #8276  #8499  #9496
+- #5657  #6589  #6666
+- #5688  #6062
+- #5689  #7776
+- #5701  #5797
+- #5868  #5730  #9411
+- #5757  #5902
+- #5762  #6147
+- #5763  #9349
+- #5788  #7366  #7367  #7387  #7491  #9000  #8986  #9127
+- #5805  #6410  #7189  #7423  #7503  #7514  #7524  #7723  #7824  #8002  #9171  #6419  #8072  #8898  #9410  #9478
+- #5812  #8022
+- #5824  #6119
+- #5851  #8543  #9182
+- #5897  #6003
+- #5926  #6072
+- #5951  #8498
+- #6058  #6073
+- #6112  #8462  #9421
+- #6120  #6175
+- #6130  #6424  #6454
+- #6223  #6137
+- #6179  #6386
+- #6218  #6469
+- #6357  #6672
+- #6358  #6381
+- #6362  #6399  #6541  #6491  #6738
+- #6404  #8341
+- #6441  #6704  #9017
+- #6442  #7186  #7770
+- #6462  #6528
+- #6481  #6694
+- #6515  #7073  #7147  #7568  #7624  #7766  #8806  #7270  #8935  #9246
+- #6652  #6722  #6742
+- #6731  #6786  #6821
+- #6866  #7122
+- #6885  #6981  #7216  #7763
+- #6938  #7406
+- #6982  #8166  #8862
+- #6983  #9035
+- #7013  #7111  #8537  #8783
+- #7020  #8620
+- #7029  #7515
+- #7064  #8843
+- #7085  #7632
+- #7113  #7882  #7961
+- #7123  #9152
+- #7125  #7201  #7759  #8517
+- #7143  #7134
+- #7151  #7817  #8913
+- #7163  #9222
+- #7171  #7478  #9242
+- #8629  #7176
+- #7203  #8332
+- #7217  #7232
+- #7224  #7320
+- #7237  #7315
+- #7290  #7653
+- #7291  #7468  #7660  #7918  #8291  #8564  #8634  #8666  #8980  #8807
+- #7293  #8259  #8492
+- #7296  #7840  #9524
+- #7328  #8812
+- #7330  #9370
+- #7344  #7900
+- #7351  #7453
+- #7356  #8384  #9338
+- #7363  #7798
+- #7377  #8796
+- #7385  #7463  #7815
+- #7396  #9467
+- #7400  #9440
+- #7405  #7897
+- #7413  #7500
+- #7416  #9105
+- #7418  #7842
+- #7436  #7471
+- #7474  #7501  #7586  #7509  #7538
+- #7482  #9473
+- #7490  #7720  #7969  #8124
+- #7497  #7876  #8715
+- #7506  #7716
+- #7516  #7903
+- #7532  #7879
+- #7572  #9468
+- #7580  #7712  #7742  #8289  #8825
+- #7589  #7690
+- #7600  #7976
+- #7604  #7878
+- #7629  #9041
+- #7630  #7636
+- #7681  #8928
+- #7684  #8327
+- #7738  #8254
+- #7812  #8034
+- #7836  #8080
+- #7869  #8425
+- #7905  #8415
+- #7917  #8005
+- #7936  #8078
+- #7947  #8770
+- #7987  #8441
+- #7990  #8696  #9324
+- #8032  #8595
+- #8068  #8102
+- #8074  #8256
+- #8180  #9240
+- #8219  #8479
+- #8231  #8640
+- #8264  #8337
+- #8347  #8971
+- #8353  #8424  #8995
+- #8393  #8854  #8946  #9169
+- #8414  #9061
+- #8448  #8621  #8993
+- #8471  #8941
+- #8482  #8530  #8711
+- #8483  #8487  #8653
+- #8494  #8582
+- #8526  #8842
+- #8528  #8636
+- #8547  #8786
+- #8699  #8571
+- #8648  #9444
+- #8706  #8952
+- #8730  #8882  #9034
+- #8735  #8837
+- #8779  #8782  #8976
+- #8803  #9448
+- #8871  #9039
+- #8881  #8994
+- #8890  #9153
+- #8927  #9019
+- #9014  #9276  #9368
+- #9071  #9321
+- #9093  #9158
+- #9122  #9226
+- #9197  #9339
+- #9216  #9423
+- #9323  #9462
+
+### Files changed by more than one open PR
+
+The PR that lands first is merged; the others rebase. Left out: files most PRs in an area touch (`README.md`, `docs/design.md`, `docs/d3d12_vulkan.md`, `runtime/CMakeLists.txt`, the translator `tools/rdna2spirv.py`), a person's own PRs, and fork branches from before most merges.
+
+- `scripts/run_gpu_tests.py`: 303 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/shims/d3d12_vulkan_device.cpp`: 301 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/test/shaders/check.py`: 267 open PRs and branches (a hot spot: rebase right after each merge)
+- `make_game.py`: 179 open PRs and branches (a hot spot: rebase right after each merge)
+- `docs/testing.md`: 145 open PRs and branches (a hot spot: rebase right after each merge)
+- `docs/runtime_imports.md`: 143 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/shims/d3d12_com.h`: 137 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/src/vulkan_replay.h`: 134 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/shims/d3d12_com.cpp`: 130 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/src/vulkan_backend.h`: 129 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/shims/d3d12_xs_device.cpp`: 110 open PRs and branches (a hot spot: rebase right after each merge)
+- `tests/semantic/regen_fixtures.py`: 96 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/shims/d3d12_xs_device.h`: 91 open PRs and branches (a hot spot: rebase right after each merge)
+- `docs/shader_validation.md`: 81 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/src/pe_loader.cpp`: 78 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/test/d3d12_vulkan_device_test.cpp`: 71 open PRs and branches (a hot spot: rebase right after each merge)
+- `tests/test_shader_checks.py`: 71 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/shims/registry.cpp`: 69 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/shims/dxgi_com.cpp`: 68 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/shims/file_system.cpp`: 66 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/src/shader_library.h`: 66 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/test/xs_proxy_mock_test.cpp`: 66 open PRs and branches (a hot spot: rebase right after each merge)
+- `docs/boot.md`: 65 open PRs and branches (a hot spot: rebase right after each merge)
+- `.github/workflows/runtime.yml`: 63 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/shims/xmem.cpp`: 63 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/src/main.cpp`: 63 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/shims/d3d12_xs.cpp`: 61 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/test/vk_test_device.h`: 61 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/src/command_list.h`: 60 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/test/file_system_test.cpp`: 53 open PRs and branches (a hot spot: rebase right after each merge)
+- `docs/pipeline_check.md`: 52 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/shims/xgameruntime.cpp`: 52 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/shims/gameinput.cpp`: 51 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/test/vk_pipeline_check.cpp`: 51 open PRs and branches (a hot spot: rebase right after each merge)
+- `tests/test_run_gpu_tests.py`: 51 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/shims/library_loader.cpp`: 46 open PRs and branches (a hot spot: rebase right after each merge)
+- `runtime/test/dxgi_swapchain_test.cpp`: 45 open PRs and branches (a hot spot: rebase right after each merge)
+
+Plus 1212 files that two to 44 open PRs change (not listed, 65k body limit).
+
+### Already on `main`, still open on GitHub
+
+The maintainer merges batches locally, so a PR can stay open after its work landed. Commits pushed to the PR after that are not on `main`.
+
+- on `main`, with newer commits on the PR that are not (their count in brackets, 55): #4495 (+1), #4490 (+1), #4338 (+5), #4302 (+3), #4293 (+1), #4268 (+3), #4258 (+1), #4242 (+4), #4238 (+1), #4232 (+1), #4230 (+2), #4229 (+2), #4228 (+1), #4207 (+3), #4120 (+2), #3986 (+1), #3974 (+7), #3960 (+1), #3941 (+2), #3926 (+1), #3916 (+4), #3907 (+1), #3872 (+1), #3855 (+1), #3853 (+1), #3773 (+2), #3770 (+1), #3768 (+1), #3700 (+1), #3634 (+2), #3530 (+1), #3496 (+1), #3491 (+4), #3318 (+2), #3260 (+1), #3228 (+1), #3166 (+1), #3137 (+1), #2811 (+5), #2778 (+2), #2717 (+1), #2585 (+4), #2494 (+1), #2031 (+2), #4516 (+3), #4542 (+3), #4554 (+1), #4602 (+3), #4620 (+5), #4628 (+1), #4636 (+1), #4653 (+1), #4667 (+1), #4664 (+2), #4658 (+1)
+- on `main` with nothing left to merge (167): #3893, #3892, #3891, #3890, #3888, #3884, #3880, #3878, #3876, #3875, #3874, #3873, #3871, #3870, #3866, #3865, #3863, #3862, #3861, #3860, #3859, #3857, #3852, #3851, #3850, #3849, #3848, #3847, #3846, #3844, #3843, #3842, #3839, #3838, #3837, #3834, #3833, #3832, #3830, #3829, #3827, #3826, #3821, #3819, #3817, #3816, #3809, #3808, #3807, #3806, #3802, #3792, #3785, #3782, #3781, #3780, #3769, #3756, #3682, #3679, #3671, #3651, #3649, #3647, #3645, #3629, #3623, #3619, #3605, #3599, #3597, #3591, #3590, #3584, #3580, #3570, #3567, #3564, #3563, #3560, #3552, #3549, #3543, #3539, #3533, #3528, #3524, #3516, #3499, #3457, #3451, #3449, #3448, #3444, #3412, #3393, #3355, #3354, #3341, #3338, #3336, #3328, #3327, #3304, #3283, #3272, #3248, #3211, #3202, #3199, #3196, #3194, #3191, #3187, #3178, #3170, #3158, #3156, #3121, #3090, #3089, #3061, #3045, #3010, #2977, #2976, #2973, #2972, #2951, #2935, #2910, #2909, #2907, #2903, #2899, #2890, #2887, #2863, #2855, #2774, #2753, #2740, #2732, #2711, #2710, #2706, #2695, #2680, #2653, #2646, #2645, #2591, #2521, #2519, #2432, #2427, #2382, #2364, #2220, #2022, #1760, #1492, #837, #589, #580, #521, #497
+
+### Fork branches ahead of `main` without a PR
+
+- `Youssefrah16:fix/rpf-probe-out-guards` (1 commit, 2026-11-23): rpf_probe: refuse directory --out before scanning and preserve symlinked report targets
+- `dhillonjagga:local-fixes` (30 commits, 2026-11-23): rdna2_decode: v_permlane16/x16 print op_sel as llvm-mc does, [FI, BOUND_CTRL]
+- `luisbaker:fix/wave64-graphics-subgroup-size` (2 commits, 2026-11-23): pipeline checker: use UPDATE_AFTER_BIND for bindless descriptor layout
+- `makmatvey:cursor/d3d-960-ms-tri-mesh-compute-w64-3691` (1 commit, 2026-11-23): D3D-960: keep mesh-compute slot stores visible under wave64 emulate
+- `Dilim0n:gta6-runtime-dev` (9 commits, 2026-11-23): d3d12_xs: add 3s watchdog and fallback PSO in slot 62 to prevent NVIDIA driver hangs on complex BVH shaders
+- `whilowcx:codex/pr8831-runtime-regressions` (11 commits, 2026-11-23): runtime: scope console A8 fallback and repair boot regression tests
+- `MonkeOnYT-glitch:boot-attempt` (44 commits, 2026-11-23): runtime: the retail title runs its frame loop (6 min, 693k D3D12 calls, PresentX window)
+- `T-Crypt:forge/boot-best` (119 commits, 2026-11-23): Merge PR #8591
+- `mrbrinker:verify/windows-gameinput-rumble` (2 commits, 2026-11-23): Verify GameInput regression on Windows with MSVC and SDL
+- `JIFO0:feat/scalable-svg-logo` (1 commit, 2026-11-23): assets, readme: switch project logo to scalable vector SVG
+- `natterman12:fix-tool-guards-joaat-bvh` (5 commits, 2026-11-23): Guard stdout in semantic_mutants
+- `tibzejoker:rt5-integration` (202 commits, 2026-11-23): Merge branch 'pr-7759' into rt5-integration
+- and 178 older branches
+
+Plus 683 older branches, more than 50 commits behind `main` (not listed, 65k body limit).
+
+### Decisions for the maintainer
+
+- CI approval for fork PRs.
+- Tiled resources (D3D-20): which packed-mip split should the layer follow? AMD RDNA2 and RDNA4 agree with each other; NVIDIA (the layer today) and WARP (never packs) differ. The console is RDNA2. `AC-Storm-YT` will make the change once decided (#374).
+- **Ray tracing (D3D-178, `romainveurrier`):** should `BuildRaytracingAccelerationStructure` build the console's XDXR BVH4 records (#1572), which the game's translated RT shaders read, or keep #743's `VkAccelerationStructureKHR`, which they can't read? Proposal: XDXR by default, KHR opt-in. The wiring PR waits on this ([question](https://github.com/ItsNotRexed/Leonida/issues/313#issuecomment-7079038047)).
+- **macOS / Apple Silicon (`zneel`, [proposal](https://github.com/ItsNotRexed/Leonida/issues/3381#issuecomment-7085219144)):** best-effort rather than a target that gates the critical path? MoltenVK failures wouldn't block a PR, a macOS CI job would be informational, and Metal workarounds would stay opt-in without changing the default translation. Several open Mac PRs change shared translator code, so the answer affects their review.
+- **Overlay location (`kotorvr`, [finding](https://github.com/ItsNotRexed/Leonida/issues/3574#issuecomment-7085828575)):** the default overlay `<game>\overlay` is visible to the title as `GAME:\overlay` (its writes twice, plus the deletion markers). Option 1: hide the overlay root inside `GAME:`. Option 2: move the default out of the game folder (needs a migration note; touches #2957 and #3471). `kotorvr` will implement whichever is chosen.
+- **16-bit compare `op_sel` (TEST-644, TEST-650):** `main` honours VOP3 `op_sel` on `v_cmp(x)_*_{f16,u16,i16}`; the only raw-encoding hardware measurement (#3329, gfx1036 via `hw_oracle`) says RDNA2 ignores it and reads the low halves. #3487 followed the hardware and was reverted in round 43 (f99ff6cb), but the probe behind the revert runs the translated path, so it can only agree with the translator (`AirKyzzZ`, #4571). Which rule should the translator follow? A re-measurement needs an RDNA2 GPU. New (`sperm`, #4816): a raw-word hw_oracle run on gfx1036 for every source form (SGPR, inline constant, literal, VGPR) reads the low halves in all of them, a third reproduction of #3329; the constant/literal/SGPR evidence behind the revert came from a probe that runs the translated path. Corpus count (`sperm`, #4933): none of the 154 16-bit VOP3 compares in the 1.0.2.1 corpus (142 programs) sets op_sel, so either rule translates every game shader the same; llvm-mc drops op_sel when disassembling, so only a raw-word fixture can exercise the rule.
+- **SHADER-715 sink dword vs the 32 KiB LDS invariant (#3932):** the sink dword makes a 32 KiB-LDS shader 32,772 bytes, which `tests/semantic/test_cs_barrier_counts_lds.py:120-122` forbids. Drop the sink at exactly 32 KiB (fall back to branch checks), or change the test's limit? (`ray3242`, #4683)
+- **Repeated merges of the same PR (`paratustra`, #4816):** 193 PR numbers have two or more "Merge pull request #N" commits among the last 2,000 merges, and each repeat of a rebased copy leaves duplicated text on `main` (`docs/models.md` 537-621 = 622-691, `docs/embedded_shaders.md`, README rows). Should the merge step skip a PR whose number already has a merge commit on `main`, or compare its changes with what is there first?
+- **Per-fixture expected words (`AwkGrep256`, #4816):** GPU fixtures keep their expected words in shared lists in `scripts/run_gpu_tests.py` (196 open PRs and branches touch it) and `runtime/test/shaders/check.py` (173), so unrelated fixture PRs conflict every merge round. Proposal: a `; expect:` line in each fixture's header, read by both runners, with old fixtures migrating later or never. It needs your OK before anyone codes it.
+
+### Process
+
+1. Claim before coding with the commands above (agreed by @ItsNotRexed).
+2. Overlapping PRs: the one that lands first is merged; the other rebases or closes.
+3. GPU test results go in #166, one comment per GPU and driver.
+

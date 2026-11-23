@@ -1,0 +1,1437 @@
+diff --git a/docs/README.md b/docs/README.md
+index a78f03359e..8fe16c7ffa 100644
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -77,6 +77,7 @@ method, scope and caveats. No game data is included.
+ | [runtime_imports.md](runtime_imports.md) | The 16 shipped modules' measured imports and shim/host/unimplemented split. |
+ | [xmem_exe_calls.md](xmem_exe_calls.md) | How the retail executable calls `xmem.dll`: call sites and constant arguments per import (`tools/import_call_sites.py`), the 23 `XMemVirtualAlloc` calls that all pass an attribute word, and the inferred shape of the physical-page family. |
+ | [audio_hal_exe_calls.md](audio_hal_exe_calls.md) | How the retail executable calls the 22 audio coprocessor, texture layout and DirectStorage imports that have no shim: call sites, constant arguments, and the four calls with a negative-result branch. |
++| [cpu_features.md](cpu_features.md) | CPU instructions in the executable a desktop CPU may lack (`tools/cpu_feature_scan.py`): 19 SSE4a, 10 CLZERO and 4 MONITORX/MWAITX sites (AMD only) and 8 CLWB sites (Intel since Ice Lake), all real code; `#UD` on hosts without them. |
+ | [xcl_compare.md](xcl_compare.md) | XCL's synthetic test title under `gta6rt --run` and under XCL (`tools/xcl_compare.py`): 5 of 50 checks pass here, both hangs are the documented manual-queue terminate deadlock, and each other difference mapped to an open item or a lead. |
+ | [gameinput.md](gameinput.md) | The GameInput shim on SDL3: `GameInputCreate` and the v0 `IGameInput`/`IGameInputDevice`/`IGameInputReading`/`IGameInputDispatcher` surface on any SDL gamepad, DualSense adaptive-trigger approximation and lightbar, force-feedback motors and trigger haptics through SDL's haptic API; 261 checks on virtual joysticks and a fake haptic backend; by hand on an Xbox Series X pad (Bluetooth) and a DualSense (USB). 261 checks on virtual joysticks and a fake haptic backend, not yet tried on a real pad. |
+ | [saves.md](saves.md) | Save containers: `JSAV` (index + JSON story save, byte-exact rebuild), `ASAV` header, `SLAYER1` packed copy (not decoded); `tools/saves.py` and import into the offline `XGameSave` folder; key hashes are case-sensitive joaat (`tools/save_keys.py`). |
+diff --git a/docs/cpu_features.md b/docs/cpu_features.md
+new file mode 100644
+index 0000000000..0f35ba4b27
+--- /dev/null
++++ b/docs/cpu_features.md
+@@ -0,0 +1,66 @@
++# CPU instructions the executable needs
++
++The Xbox Series CPU is an AMD Zen 2, and the runtime runs the game's code natively
++([design.md](design.md), "Why a loader before a recompiler"). Code built for one known CPU may use every instruction
++that CPU has without asking CPUID first; whether a given site is guarded by a check is not something this scan shows.
++An instruction the host lacks raises `#UD`
++(`STATUS_ILLEGAL_INSTRUCTION`) where it is reached, and a privileged one faults in user mode. This page records
++which such instructions `game_scarlett_master.exe` contains, measured with `tools/cpu_feature_scan.py`. Counts only;
++nothing from the executable is quoted.
++
++## Reproduce
++
++```powershell
++python -I tools\cpu_feature_scan.py <game>\game_scarlett_master.exe            # summary
++python -I tools\cpu_feature_scan.py <game>\game_scarlett_master.exe --sites    # plus the RVA of each flagged site
++```
++
++It streams MSVC `dumpbin /disasm:nobytes` (a few minutes for this executable, with no listing written to disk; a saved
++listing works too, with `--image <exe>` for `.pdata`). Each instruction is mapped to the CPUID feature or privilege class it
++needs, and each count is split by whether the site lies inside a `.pdata` function range. A linear disassembly also
++decodes data in `.text` (jump tables, padding), so a hit outside every `.pdata` range is often not code; a leaf
++function that does not touch the stack has no `.pdata` entry either, so those sites need a look by hand.
++
++## Measured result (1.0.2.1)
++
++26,674,075 instructions decoded in `.text`, 22,435,554 of them inside the 299,257 `.pdata` ranges.
++
++| Feature | Class | Sites | Inside `.pdata` | What a host without it does |
++|---|---|---:|---:|---|
++| SSE4a (`insertq`) | AMD only | 19 | 17 | `#UD` on every Intel CPU |
++| CLZERO | AMD only | 10 | 0 | `#UD` on every Intel CPU |
++| MONITORX (`monitorx`, `mwaitx`) | AMD only | 4 | 4 | `#UD` on every Intel CPU |
++| CLWB | newer Intel only | 8 | 6 | `#UD` on Intel client CPUs before Ice Lake / Tiger Lake (Skylake to Comet Lake) |
++| Port I/O, `cli`/`hlt` | privileged | 8 | 2 | fault in user mode |
++| `int n` (not 3/29h/2Ch/2Dh) | kernel call | 1 | 1 | a software interrupt Windows does not serve |
++| CPUID / XGETBV | host query | 9 / 2 | 9 / 2 | run everywhere; answer with the host's values |
++
++Each flagged site was read by hand in a private copy (not quoted here):
++
++- All 41 SSE4a, CLZERO, MONITORX and CLWB sites read as real code, not data decoded as instructions: each sits
++  among instructions of the same kind of code (vector arithmetic around the `insertq` sites, cache-line loops around
++  CLZERO and CLWB, a wait on a memory address around the two `monitorx`/`mwaitx` pairs). This is a static reading:
++  it does not show which sites run, or whether a CPUID check in front keeps any of them from an Intel host. The 10 CLZERO sites are one leaf routine, a cache-line zeroing
++  loop with no `.pdata` entry, which is why none of them is inside a `.pdata` range.
++- The 8 privileged and 1 `int n` hits are data: tables of 32-bit offsets placed in `.text` (some inside a `.pdata`
++  range) that the linear sweep decodes as instructions. They are listed for completeness, not as code to replace.
++
++No AVX-512, VAES, VPCLMULQDQ, SHA, RDPID, RDPRU, XOP, FMA4, TBM, SYSCALL or SYSENTER instruction was found. The
++256-bit integer, FMA3, F16C, BMI1/2, ADX, MOVBE, AES-NI and PCLMULQDQ instructions it uses are on every Intel CPU
++since Haswell/Broadwell and every AMD CPU since Zen, so they are counted but not flagged. No RDTSC or RDTSCP is
++in the image.
++
++## What it means for the runtime
++
++- On an AMD Zen 2 or later host every flagged user-mode instruction runs as on the console.
++- On an Intel host the SSE4a, CLZERO and MONITORX sites, and on Intel client CPUs before Ice Lake the CLWB sites,
++  raise `STATUS_ILLEGAL_INSTRUCTION` when reached. `gta6rt` emulates them (`runtime/src/cpu_emulation.h`, see
++  [runtime/README.md](../runtime/README.md), "PE loader"): CLZERO zeroes the 64-byte line, CLWB is a write-back hint
++  with nothing to do on coherent memory, MWAITX returns at once (an early return is one the manual allows), and
++  `insertq`/`extrq` are bit-field operations on the low quadword. `cpu_emulation_test` checks each form against the
++  CPU on a host that has it and against the handler on one that does not (an i7-10700K: all four lacking, all checks
++  pass).
++- The CPUID sites see the host's vendor, family and features, not the console's. What the game does with the
++  answers is not measured here.
++
++Not measured: which of these sites a boot reaches, and in which order.
+diff --git a/docs/design.md b/docs/design.md
+index 92578a41f1..86da676fb2 100644
+--- a/docs/design.md
++++ b/docs/design.md
+@@ -73,6 +73,9 @@ This writes `reports/exe/` (JSON plus a readable summary). Check it in this orde
+    `VERIFY` note of the runtime and the docs, with file and line. Notes in a shim whose class the exe calls are
+    marked **called** and come first: those are the ones its first boot reaches, such as the `XStoreGameLicense`
+    sizes.
++7. **CPU instructions.** `python -I tools/cpu_feature_scan.py <exe>` lists the instructions a desktop CPU may lack
++   (AMD-only, newer-Intel-only, privileged), with counts split by `.pdata` range. The retail executable has a few
++   AMD-only and CLWB sites that raise `#UD` on Intel hosts ([cpu_features.md](cpu_features.md)).
+ 
+ Then `runtime\build\gta6rt.exe --dry-run <exe>` maps the image and binds every import to the shim table without
+ running any game code. It reports what it couldn't bind.
+diff --git a/runtime/CMakeLists.txt b/runtime/CMakeLists.txt
+index 719b370699..b83214288a 100644
+--- a/runtime/CMakeLists.txt
++++ b/runtime/CMakeLists.txt
+@@ -213,6 +213,13 @@ if(WIN32 AND LEONIDA_BUILD_WINDOWS_RUNTIME)
+   target_link_options(xmem_test PRIVATE /OPT:NOREF)
+   target_link_libraries(xmem_test PRIVATE psapi)
+ 
++  # The Zen 2 instructions a desktop CPU may lack (src/cpu_emulation.h): decoded, emulated on a CONTEXT, and run for
++  # real with the #UD handler installed, so an Intel host takes the emulated path and an AMD one the native path.
++  add_executable(cpu_emulation_test test/cpu_emulation_test.cpp)
++  target_include_directories(cpu_emulation_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
++  target_compile_definitions(cpu_emulation_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
++  target_compile_options(cpu_emulation_test PRIVATE /W4 /permissive- /utf-8)
++
+   # xg_xs shim: the two exports and the texture computer's slots against the measured call shapes.
+   add_executable(xg_xs_test
+     test/xg_xs_test.cpp
+@@ -1007,6 +1014,9 @@ if(BUILD_TESTING)
+     add_test(NAME bink_audio COMMAND bink_audio_test)
+     set_tests_properties(bink_audio PROPERTIES SKIP_RETURN_CODE 77)
+   endif()
++  if(WIN32 AND TARGET cpu_emulation_test)
++    add_test(NAME cpu_emulation COMMAND cpu_emulation_test)
++  endif()
+   if(WIN32 AND TARGET xmem_test)
+     add_test(NAME xmem COMMAND xmem_test)
+   endif()
+diff --git a/runtime/README.md b/runtime/README.md
+index 70e87b422b..b118a3da70 100644
+--- a/runtime/README.md
++++ b/runtime/README.md
+@@ -113,6 +113,17 @@ basename when it has a character outside ASCII (`Loader::find_loaded_module_w`,
+ module names compare case-insensitively with the system's own table (`CompareStringOrdinal`), as Windows
+ compares them; a narrow name outside ASCII compares the same way through the ANSI code page.
+ 
++The game's code is built for the console's AMD Zen 2 and contains a few of its instructions: SSE4a
++`insertq`/`extrq`, `clzero` and `monitorx`/`mwaitx` (no Intel CPU has them) and `clwb` (Intel since Ice Lake)
++([docs/cpu_features.md](../docs/cpu_features.md)). Boots on Intel hosts reach `clzero` and `clwb`, so no CPUID check
++keeps those from an Intel CPU; for the others that is not measured. A host without one raises `#UD` there, so `gta6rt` installs a
++vectored handler before any image code runs (`src/cpu_emulation.h`): it recognises those encodings at the faulting
++address, does the same work on the thread's context and continues after the instruction. It prints one `[rt] cpu:`
++line at startup naming what the host lacks, and one the first time each instruction is emulated. On a host that has
++them the CPU runs them and the handler never sees them. Each emulated instruction costs an exception round trip, so a
++hot loop of them is slow; patching such a site in place is a later step. `cpu_emulation_test` runs every form for
++real: natively on a Zen host, through the handler on an Intel one.
++
+ `module_names` checks native and mapped renamed DLLs, distinct Unicode identities, basename cache
+ reuse, existing ACP aliases, the wide and case-insensitive lookups, export execution, and path errors. On native Windows with Python available,
+ `run_module_names` compares original renamed EXEs through native execution and `--dry-run`, `--init`,
+diff --git a/runtime/src/cpu_emulation.h b/runtime/src/cpu_emulation.h
+new file mode 100644
+index 0000000000..79b6d1b252
+--- /dev/null
++++ b/runtime/src/cpu_emulation.h
+@@ -0,0 +1,327 @@
++// Emulates the few Zen 2 instructions in the game's code that a desktop CPU may lack (docs/cpu_features.md).
++//
++// The executable is built for the console's AMD Zen 2 and uses some of its instructions without asking CPUID:
++// SSE4a INSERTQ/EXTRQ, CLZERO and MONITORX/MWAITX (AMD only) and CLWB (Intel since Ice Lake). On a host without
++// one, the CPU raises #UD (STATUS_ILLEGAL_INSTRUCTION) at that instruction. A vectored handler recognises these
++// encodings at the faulting RIP, does the same work on the thread's CONTEXT and continues after the instruction.
++// On a host that has the feature the CPU runs the instruction itself and the handler never sees it.
++//
++// What each one does, from the AMD64 Architecture Programmer's Manual (vol. 3 for CLZERO, MONITORX, MWAITX; vol. 4
++// for INSERTQ, EXTRQ) and the Intel SDM vol. 2 for CLWB:
++//   INSERTQ xmm1, xmm2, len, idx   F2 0F 78 /r ib ib   insert the low `len` bits of xmm2[63:0] into xmm1[63:0] at
++//                                                       bit `idx` (len 0 means 64)
++//   INSERTQ xmm1, xmm2             F2 0F 79 /r         same, len = xmm2[69:64], idx = xmm2[77:72]
++//   EXTRQ   xmm1, len, idx         66 0F 78 /0 ib ib   xmm1[63:0] = (xmm1[63:0] >> idx), `len` bits, zero-extended
++//   EXTRQ   xmm1, xmm2             66 0F 79 /r         same, len = xmm2[5:0], idx = xmm2[13:8]
++//   CLZERO                         0F 01 FC            zero the 64-byte cache line that rAX points into; a line
++//                                                       it cannot write raises that write fault, as the CPU does
++//   MONITORX                       0F 01 FA            arm an address monitor: a hint, nothing to do here
++//   MWAITX                         0F 01 FB            wait for the monitor or a timer; returning at once is one
++//                                                       of the exits the manual allows, so it is a pause
++//   CLWB m8                        66 0F AE /6 (mem)   write a line back, keeping it cached: ordinary write-back
++//                                                       memory is coherent, so there is nothing to do here
++// The APM leaves xmm1[127:64] undefined after INSERTQ and EXTRQ; a Zen 3 zeroes it in all four forms (measured in
++// #7111's review), so the emulation does too. A field with len + idx > 64 is undefined as well; the emulation keeps
++// the bits that fit, which matched that Zen 3 on every len/idx pair.
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++
++namespace rt::cpu_emulation {
++
++enum class Op { none, insertq_imm, insertq_reg, extrq_imm, extrq_reg, clzero, monitorx, mwaitx, clwb };
++
++struct Decoded {
++    Op op = Op::none;
++    std::size_t length = 0;  // bytes, prefixes included
++    int dst = 0;             // xmm register (INSERTQ, EXTRQ)
++    int src = 0;             // xmm register (the register forms)
++    uint8_t len = 0;         // field length and index of the immediate forms
++    uint8_t idx = 0;
++    bool addr32 = false;     // a 67 prefix: CLZERO uses EAX
++};
++
++// One of the encodings above at `code` (`avail` readable bytes), or Op::none.
++inline Decoded decode(const uint8_t* code, std::size_t avail) {
++    Decoded d;
++    std::size_t i = 0;
++    if (avail > 15) avail = 15;  // an x86 instruction is at most 15 bytes; a longer one is #UD on the CPU too
++    bool p66 = false, pf2 = false, pf3 = false;
++    uint8_t rex = 0;
++    // Legacy prefixes and REX bytes in any order; only a REX right before the opcode counts, an earlier one is
++    // ignored (as AMD CPUs do: `48 66 0F 01 FC` and `48 48 0F 01 FC` are CLZERO). LOCK (F0) ends the scan: #UD.
++    for (; i < avail && i < 14; ++i) {
++        const uint8_t b = code[i];
++        if ((b & 0xF0) == 0x40) { rex = b; continue; }
++        if (b == 0x66) p66 = true;
++        else if (b == 0xF2) pf2 = true;
++        else if (b == 0xF3) pf3 = true;
++        else if (b == 0x67) d.addr32 = true;
++        else if (b == 0x2E || b == 0x3E || b == 0x26 || b == 0x36 || b == 0x64 || b == 0x65) {}
++        else break;
++        rex = 0;
++    }
++    if (i + 2 > avail || code[i] != 0x0F) return {};
++    const uint8_t op = code[i + 1];
++    i += 2;
++    if (op == 0x01) {  // CLZERO, MONITORX, MWAITX
++        if (i >= avail) return {};
++        const uint8_t m = code[i++];
++        // AMD CPUs run CLZERO with 66, F2 or F3 in front (measured on Zen 3 in #7055's reviews). For FA/FB an F3
++        // selects another instruction (F3 0F 01 FA is MCOMMIT), and no 66 or F2 form is measured, so MONITORX and
++        // MWAITX are only taken without those prefixes (the title's own sites carry none).
++        if ((p66 || pf2 || pf3) && m != 0xFC) return {};
++        d.op = m == 0xFC ? Op::clzero : m == 0xFA ? Op::monitorx : m == 0xFB ? Op::mwaitx : Op::none;
++        d.length = i;
++        return d.op == Op::none ? Decoded{} : d;
++    }
++    if (i >= avail) return {};
++    const uint8_t modrm = code[i++];
++    const int mod = modrm >> 6, reg = ((modrm >> 3) & 7) | ((rex & 4) << 1), rm = (modrm & 7) | ((rex & 1) << 3);
++    if (op == 0x78 || op == 0x79) {  // SSE4a; F2 is INSERTQ, 66 is EXTRQ; both need a register operand
++        if (mod != 3 || pf3 || p66 == pf2) return {};
++        const bool imm = op == 0x78;
++        if (imm) {
++            if (i + 2 > avail) return {};
++            if (p66 && (modrm & 0x38)) return {};  // EXTRQ's immediate form is /0
++            d.len = code[i] & 0x3F;
++            d.idx = code[i + 1] & 0x3F;
++            i += 2;
++        }
++        d.op = pf2 ? (imm ? Op::insertq_imm : Op::insertq_reg) : (imm ? Op::extrq_imm : Op::extrq_reg);
++        if (p66 && imm) d.dst = rm;  // EXTRQ xmm1, imm, imm names xmm1 in r/m
++        else d.dst = reg, d.src = rm;
++        d.length = i;
++        return d;
++    }
++    if (op == 0xAE && p66 && !pf2 && !pf3 && mod != 3 && ((modrm >> 3) & 7) == 6) {  // CLWB m8
++        if ((modrm & 7) == 4) {  // SIB
++            if (i >= avail) return {};
++            const uint8_t sib = code[i++];
++            if (mod == 0 && (sib & 7) == 5) i += 4;
++        } else if (mod == 0 && (modrm & 7) == 5) {
++            i += 4;  // RIP-relative
++        }
++        i += mod == 1 ? 1 : mod == 2 ? 4 : 0;
++        if (i > avail) return {};
++        d.op = Op::clwb;
++        d.length = i;
++        return d;
++    }
++    return {};
++}
++
++inline uint64_t field_mask(unsigned len) { return len >= 64 ? ~uint64_t(0) : (uint64_t(1) << len) - 1; }
++
++// INSERTQ on the low quadword: `len` (0 means 64) bits of `src` placed at bit `idx` of `dst`.
++inline uint64_t insert_bits(uint64_t dst, uint64_t src, unsigned len, unsigned idx) {
++    len &= 63;
++    idx &= 63;
++    const uint64_t mask = field_mask(len ? len : 64) << idx;
++    return (dst & ~mask) | ((src << idx) & mask);
++}
++
++// EXTRQ on the low quadword: `len` (0 means 64) bits of `src` from bit `idx`, zero-extended.
++inline uint64_t extract_bits(uint64_t src, unsigned len, unsigned idx) {
++    len &= 63;
++    idx &= 63;
++    return (src >> idx) & field_mask(len ? len : 64);
++}
++
++}  // namespace rt::cpu_emulation
++
++#ifdef _WIN32
++#include <windows.h>
++#include <intrin.h>
++#include <psapi.h>
++
++#include <atomic>
++#include <cstdio>
++
++namespace rt::cpu_emulation {
++
++struct Host {
++    bool sse4a = false, monitorx = false, clzero = false, clwb = false;
++};
++
++inline Host detect_host() {
++    Host h;
++    int r[4];
++    __cpuid(r, 0);
++    const int max_leaf = r[0];
++    if (max_leaf >= 7) {
++        __cpuidex(r, 7, 0);
++        h.clwb = (r[1] >> 24) & 1;  // EBX bit 24
++    }
++    __cpuid(r, 0x80000000);
++    const unsigned max_ext = unsigned(r[0]);
++    if (max_ext >= 0x80000001) {
++        __cpuid(r, 0x80000001);
++        h.sse4a = (r[2] >> 6) & 1;      // ECX bit 6
++        h.monitorx = (r[2] >> 29) & 1;  // ECX bit 29
++    }
++    if (max_ext >= 0x80000008) {
++        __cpuid(r, 0x80000008);
++        h.clzero = r[1] & 1;  // EBX bit 0
++    }
++    return h;
++}
++
++inline const char* name(Op op) {
++    switch (op) {
++    case Op::insertq_imm: case Op::insertq_reg: return "INSERTQ (SSE4a)";
++    case Op::extrq_imm: case Op::extrq_reg: return "EXTRQ (SSE4a)";
++    case Op::clzero: return "CLZERO";
++    case Op::monitorx: return "MONITORX";
++    case Op::mwaitx: return "MWAITX";
++    case Op::clwb: return "CLWB";
++    default: return "none";
++    }
++}
++
++// How many times each instruction was emulated; the two forms of INSERTQ and of EXTRQ share one count.
++inline std::atomic<uint64_t>& count(Op op) {
++    static std::atomic<uint64_t> counts[9];
++    if (op == Op::insertq_reg) op = Op::insertq_imm;
++    if (op == Op::extrq_reg) op = Op::extrq_imm;
++    return counts[int(op)];
++}
++
++// 0 when the page holding `addr` can be written; otherwise the exception a write raises there. A guard page loses
++// its guard on that first touch and reports STATUS_GUARD_PAGE_VIOLATION, as the system does for a real access.
++inline DWORD writable(uint64_t addr) {
++    // A resident page answers from the working set in constant time, while VirtualQuery's cost grows with the rest
++    // of the region (it sizes the run of pages with the same attributes): up to 0.7 ms in a large heap, per line
++    // (#7111 review). A page that is not resident, or not plainly writable, takes the VirtualQuery path below.
++    PSAPI_WORKING_SET_EX_INFORMATION ws{};
++    ws.VirtualAddress = reinterpret_cast<void*>(addr & ~uint64_t(0xFFF));
++    if (QueryWorkingSetEx(GetCurrentProcess(), &ws, sizeof ws) && ws.VirtualAttributes.Valid) {
++        const DWORD wp = DWORD(ws.VirtualAttributes.Win32Protection);
++        const DWORD p = wp & 0xFF;
++        if (!(wp & PAGE_GUARD) && (p == PAGE_READWRITE || p == PAGE_WRITECOPY || p == PAGE_EXECUTE_READWRITE ||
++                                   p == PAGE_EXECUTE_WRITECOPY))
++            return 0;
++    }
++    MEMORY_BASIC_INFORMATION mbi;
++    if (!VirtualQuery(reinterpret_cast<void*>(addr), &mbi, sizeof mbi) || mbi.State != MEM_COMMIT)
++        return DWORD(STATUS_ACCESS_VIOLATION);
++    if (mbi.Protect & PAGE_GUARD) {
++        DWORD old = 0;
++        VirtualProtect(reinterpret_cast<void*>(addr & ~uint64_t(0xFFF)), 1, mbi.Protect & ~DWORD(PAGE_GUARD), &old);
++        return DWORD(STATUS_GUARD_PAGE_VIOLATION);
++    }
++    const DWORD p = mbi.Protect & 0xFF;
++    const bool ok = p == PAGE_READWRITE || p == PAGE_WRITECOPY || p == PAGE_EXECUTE_READWRITE ||
++                    p == PAGE_EXECUTE_WRITECOPY;
++    return ok ? 0 : DWORD(STATUS_ACCESS_VIOLATION);
++}
++
++// How many of the `want` bytes at `addr` can be read, by page protection (no fault is taken to find out).
++inline std::size_t readable(uint64_t addr, std::size_t want) {
++    std::size_t got = 0;
++    while (got < want) {
++        MEMORY_BASIC_INFORMATION mbi;
++        if (!VirtualQuery(reinterpret_cast<void*>(addr + got), &mbi, sizeof mbi) || mbi.State != MEM_COMMIT ||
++            (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) || !mbi.Protect)
++            break;
++        const uint64_t end = reinterpret_cast<uint64_t>(mbi.BaseAddress) + mbi.RegionSize;
++        got += std::size_t(end - (addr + got)) < want - got ? std::size_t(end - (addr + got)) : want - got;
++    }
++    return got;
++}
++
++inline uint64_t& lo(CONTEXT* c, int r) { return c->FltSave.XmmRegisters[r].Low; }
++inline uint64_t hi(const CONTEXT* c, int r) { return uint64_t(c->FltSave.XmmRegisters[r].High); }
++
++// Apply one decoded instruction to `c` and step past it. False when the line CLZERO zeroes cannot be written; then
++// `fault`, when given, receives the exception the write raised (STATUS_ACCESS_VIOLATION with the write flag and the
++// line's address, or STATUS_GUARD_PAGE_VIOLATION, as the real instruction would raise) and `c` is unchanged.
++inline bool apply(const Decoded& d, CONTEXT* c, EXCEPTION_RECORD* fault = nullptr) {
++    switch (d.op) {
++    case Op::insertq_imm:
++        lo(c, d.dst) = insert_bits(lo(c, d.dst), lo(c, d.src), d.len, d.idx);
++        c->FltSave.XmmRegisters[d.dst].High = 0;
++        break;
++    case Op::insertq_reg: {
++        const uint64_t ctl = hi(c, d.src);
++        lo(c, d.dst) = insert_bits(lo(c, d.dst), lo(c, d.src), unsigned(ctl) & 63, unsigned(ctl >> 8) & 63);
++        c->FltSave.XmmRegisters[d.dst].High = 0;
++        break;
++    }
++    case Op::extrq_imm:
++        lo(c, d.dst) = extract_bits(lo(c, d.dst), d.len, d.idx);
++        c->FltSave.XmmRegisters[d.dst].High = 0;
++        break;
++    case Op::extrq_reg: {
++        const uint64_t ctl = lo(c, d.src);
++        lo(c, d.dst) = extract_bits(lo(c, d.dst), unsigned(ctl) & 63, unsigned(ctl >> 8) & 63);
++        c->FltSave.XmmRegisters[d.dst].High = 0;
++        break;
++    }
++    case Op::clzero: {
++        const uint64_t addr = (d.addr32 ? (c->Rax & 0xFFFFFFFFu) : c->Rax) & ~uint64_t(63);
++        // The line's page is checked first instead of catching a fault from the write: a compiler may turn the
++        // write into inline stores that a local __try does not cover (clang-cl without /EHa). A 64-byte aligned
++        // line never spans two pages, so one query answers for all of it.
++        const DWORD code = writable(addr);
++        if (code) {
++            if (fault) {
++                std::memset(fault, 0, sizeof *fault);
++                fault->ExceptionCode = code;
++                fault->NumberParameters = 2;
++                fault->ExceptionInformation[0] = 1;  // a write
++                fault->ExceptionInformation[1] = ULONG_PTR(addr);
++            }
++            return false;
++        }
++        std::memset(reinterpret_cast<void*>(addr), 0, 64);
++        break;
++    }
++    case Op::mwaitx: YieldProcessor(); break;
++    case Op::monitorx: case Op::clwb: break;
++    default: return false;
++    }
++    c->Rip += d.length;
++    return true;
++}
++
++inline LONG CALLBACK handler(EXCEPTION_POINTERS* info) {
++    if (info->ExceptionRecord->ExceptionCode != STATUS_ILLEGAL_INSTRUCTION) return EXCEPTION_CONTINUE_SEARCH;
++    CONTEXT* c = info->ContextRecord;
++    uint8_t code[15] = {};
++    // The CPU fetched this instruction from RIP's page, so only bytes past that page need a (slow) query; the
++    // instruction may end at the page boundary.
++    const std::size_t in_page = std::size_t(0x1000 - (c->Rip & 0xFFF));
++    const std::size_t avail =
++        in_page >= sizeof code ? sizeof code : in_page + readable(c->Rip + in_page, sizeof code - in_page);
++    std::memcpy(code, reinterpret_cast<const void*>(c->Rip), avail);
++    const Decoded d = decode(code, avail);
++    if (d.op == Op::none) return EXCEPTION_CONTINUE_SEARCH;
++    EXCEPTION_RECORD fault;
++    if (!apply(d, c, &fault)) {
++        // CLZERO on a line it cannot write: the CPU would raise that fault at this instruction, so the next handlers
++        // see it instead of the #UD (RIP still points at the instruction).
++        EXCEPTION_RECORD* r = info->ExceptionRecord;
++        r->ExceptionCode = fault.ExceptionCode;
++        r->ExceptionFlags = 0;
++        r->NumberParameters = fault.NumberParameters;
++        r->ExceptionInformation[0] = fault.ExceptionInformation[0];
++        r->ExceptionInformation[1] = fault.ExceptionInformation[1];
++        return EXCEPTION_CONTINUE_SEARCH;
++    }
++    if (count(d.op).fetch_add(1, std::memory_order_relaxed) == 0)
++        std::fprintf(stderr, "[rt] cpu: this CPU has no %s; emulating it (first at %p)\n", name(d.op),
++                     reinterpret_cast<void*>(c->Rip - d.length));
++    return EXCEPTION_CONTINUE_EXECUTION;
++}
++
++// Installs the handler first in the vectored chain, once. Returns false if Windows refused it.
++inline bool install() {
++    static void* const cookie = AddVectoredExceptionHandler(1, &handler);
++    return cookie != nullptr;
++}
++
++}  // namespace rt::cpu_emulation
++#endif
+diff --git a/runtime/src/main.cpp b/runtime/src/main.cpp
+index 71a5b44e12..505cd3ea89 100644
+--- a/runtime/src/main.cpp
++++ b/runtime/src/main.cpp
+@@ -29,6 +29,7 @@
+ 
+ #include "base_reservation.h"
+ #include "code_hooks.h"
++#include "cpu_emulation.h"
+ #include "mods.h"
+ #include "pe_loader.h"
+ #include "../shims/d3d12_trace.h"
+@@ -152,6 +153,15 @@ int wmain(int argc, wchar_t** argv) {
+                                                    : "error: cannot create the trace file\n");
+         return 2;
+     }
++    // The console's Zen 2 instructions this CPU may lack (docs/cpu_features.md): emulated on #UD. Installed after the
++    // trace's handler so it runs first, and an emulated instruction is not recorded as an exception.
++    if (const auto host = rt::cpu_emulation::detect_host(); !host.sse4a || !host.clzero || !host.monitorx || !host.clwb)
++        std::fprintf(stderr, "[rt] cpu: this CPU lacks%s%s%s%s; the game's uses are emulated (docs/cpu_features.md)\n",
++                     host.sse4a ? "" : " SSE4a", host.clzero ? "" : " CLZERO", host.monitorx ? "" : " MONITORX",
++                     host.clwb ? "" : " CLWB");
++    if (!rt::cpu_emulation::install())
++        std::fprintf(stderr, "[rt] cpu: AddVectoredExceptionHandler failed (error %lu); instructions this CPU lacks "
++                             "will stop the game\n", GetLastError());
+ 
+     try {
+         rt::Loader loader(game_dir);
+diff --git a/runtime/test/cpu_emulation_test.cpp b/runtime/test/cpu_emulation_test.cpp
+new file mode 100644
+index 0000000000..3e05f63b87
+--- /dev/null
++++ b/runtime/test/cpu_emulation_test.cpp
+@@ -0,0 +1,312 @@
++// The Zen 2 instruction emulation (src/cpu_emulation.h, docs/cpu_features.md): the decoder on hand-written
++// encodings, the bit-field helpers, `apply` on a synthetic CONTEXT, and then each instruction run for real from an
++// executable buffer with the handler installed. On a host that has the feature the CPU runs it and the results
++// must be the same; on one that lacks it (an Intel CPU for SSE4a, CLZERO and MONITORX) the handler does the work.
++// The test prints which path each instruction took. No game files.
++#include <windows.h>
++
++#include <cstdint>
++#include <cstdio>
++#include <cstring>
++#include <initializer_list>
++#include <vector>
++
++#include "cpu_emulation.h"
++
++namespace ce = rt::cpu_emulation;
++
++namespace {
++int failures = 0;
++
++void check(bool ok, const char* what) {
++    if (!ok) {
++        std::fprintf(stderr, "FAIL %s\n", what);
++        ++failures;
++    }
++}
++
++ce::Decoded dec(std::initializer_list<uint8_t> bytes) {
++    std::vector<uint8_t> v(bytes);
++    return ce::decode(v.data(), v.size());
++}
++
++void test_decode() {
++    ce::Decoded d = dec({0xF2, 0x0F, 0x78, 0xC1, 0x10, 0x08});  // insertq xmm0, xmm1, 16, 8
++    check(d.op == ce::Op::insertq_imm && d.length == 6 && d.dst == 0 && d.src == 1 && d.len == 16 && d.idx == 8,
++          "insertq imm");
++    d = dec({0xF2, 0x45, 0x0F, 0x78, 0xD3, 0x05, 0x3B});  // insertq xmm10, xmm11, 5, 59
++    check(d.op == ce::Op::insertq_imm && d.length == 7 && d.dst == 10 && d.src == 11 && d.len == 5 && d.idx == 59,
++          "insertq imm with REX");
++    d = dec({0xF2, 0x0F, 0x79, 0xCA});  // insertq xmm1, xmm2
++    check(d.op == ce::Op::insertq_reg && d.length == 4 && d.dst == 1 && d.src == 2, "insertq reg");
++    d = dec({0x66, 0x0F, 0x78, 0xC3, 0x08, 0x04});  // extrq xmm3, 8, 4
++    check(d.op == ce::Op::extrq_imm && d.length == 6 && d.dst == 3 && d.len == 8 && d.idx == 4, "extrq imm");
++    d = dec({0x66, 0x41, 0x0F, 0x78, 0xC7, 0x00, 0x00});  // extrq xmm15, 0, 0
++    check(d.op == ce::Op::extrq_imm && d.dst == 15 && d.length == 7, "extrq imm with REX.B");
++    d = dec({0x66, 0x0F, 0x79, 0xE9});  // extrq xmm5, xmm1
++    check(d.op == ce::Op::extrq_reg && d.dst == 5 && d.src == 1 && d.length == 4, "extrq reg");
++    check(dec({0x66, 0x0F, 0x78, 0xC8, 0x08, 0x04}).op == ce::Op::none, "extrq imm needs /0");
++    check(dec({0xF2, 0x0F, 0x78, 0x01, 0x08, 0x04}).op == ce::Op::none, "insertq needs a register operand");
++    check(dec({0x0F, 0x78, 0xC1}).op == ce::Op::none, "0F 78 without F2/66 is VMREAD, not SSE4a");
++    check(dec({0xF3, 0x0F, 0x78, 0xC1, 1, 1}).op == ce::Op::none, "F3 0F 78 is not SSE4a");
++
++    d = dec({0x0F, 0x01, 0xFC});
++    check(d.op == ce::Op::clzero && d.length == 3 && !d.addr32, "clzero");
++    d = dec({0x67, 0x0F, 0x01, 0xFC});
++    check(d.op == ce::Op::clzero && d.length == 4 && d.addr32, "clzero with 67");
++    check(dec({0x0F, 0x01, 0xFA}).op == ce::Op::monitorx, "monitorx");
++    check(dec({0x0F, 0x01, 0xFB}).op == ce::Op::mwaitx, "mwaitx");
++    check(dec({0x0F, 0x01, 0xF9}).op == ce::Op::none, "rdtscp is not handled");
++    check(dec({0xF3, 0x0F, 0x01, 0xFA}).op == ce::Op::none, "F3 0F 01 FA is MCOMMIT, not monitorx");
++    for (uint8_t pfx : {uint8_t(0x66), uint8_t(0xF2), uint8_t(0xF3), uint8_t(0x48)}) {
++        d = dec({pfx, 0x0F, 0x01, 0xFC});
++        check(d.op == ce::Op::clzero && d.length == 4, "clzero with 66, F2, F3 or REX (native on Zen 3)");
++    }
++    d = dec({0x48, 0x66, 0x0F, 0x01, 0xFC});
++    check(d.op == ce::Op::clzero && d.length == 5, "clzero with REX before 66 (the REX is ignored)");
++    d = dec({0x48, 0x48, 0x0F, 0x01, 0xFC});
++    check(d.op == ce::Op::clzero && d.length == 5, "clzero with two REX bytes");
++    check(dec({0xF2, 0x0F, 0x01, 0xFB}).op == ce::Op::none, "F2 0F 01 FB is not mwaitx");
++    check(dec({0x66, 0x0F, 0x01, 0xFA}).op == ce::Op::none, "66 0F 01 FA is not monitorx");
++    check(dec({0x66, 0x0F, 0x01, 0xFB}).op == ce::Op::none, "66 0F 01 FB is not mwaitx");
++    {
++        // An instruction is at most 15 bytes: 12 prefixes + 0F 01 FC fit, 13 do not.
++        std::vector<uint8_t> v(12, 0x3E);
++        v.insert(v.end(), {0x0F, 0x01, 0xFC});
++        d = ce::decode(v.data(), v.size());
++        check(d.op == ce::Op::clzero && d.length == 15, "clzero behind 12 prefixes (15 bytes)");
++        v.insert(v.begin(), 0x3E);
++        v.insert(v.end(), {0x90, 0x90});  // more readable bytes after it must not help
++        check(ce::decode(v.data(), v.size()).op == ce::Op::none, "a 16-byte clzero is #UD");
++        std::vector<uint8_t> w(11, 0x3E);
++        w.insert(w.end(), {0x66, 0x0F, 0x78, 0xC0, 0x08, 0x04, 0x90});
++        check(ce::decode(w.data(), w.size()).op == ce::Op::none, "a 17-byte extrq is #UD");
++    }
++    d = dec({0x48, 0x66, 0x0F, 0x78, 0xC1, 1, 1});
++    check(d.op == ce::Op::extrq_imm && d.dst == 1, "a REX before 66 does not extend extrq's register");
++    d = dec({0x66, 0x0F, 0x01, 0xFC});
++    check(d.op == ce::Op::clzero && d.length == 4, "clzero with 66");
++    d = dec({0x64, 0x48, 0x0F, 0x01, 0xFC});
++    check(d.op == ce::Op::clzero && d.length == 5, "clzero with a segment override and REX");
++    check(dec({0xF0, 0x0F, 0x01, 0xFC}).op == ce::Op::none, "LOCK clzero stays #UD");
++
++    check(dec({0x66, 0x0F, 0xAE, 0x31}).length == 4, "clwb [rcx]");
++    check(dec({0x66, 0x0F, 0xAE, 0x74, 0x01, 0x08}).length == 6, "clwb [rcx+rax+8]");
++    check(dec({0x66, 0x0F, 0xAE, 0xB1, 0, 1, 0, 0}).length == 8, "clwb [rcx+disp32]");
++    check(dec({0x66, 0x0F, 0xAE, 0x35, 1, 2, 3, 4}).length == 8, "clwb [rip+disp32]");
++    check(dec({0x66, 0x0F, 0xAE, 0x34, 0x25, 1, 2, 3, 4}).length == 9, "clwb [disp32] through SIB");
++    check(dec({0x66, 0x41, 0x0F, 0xAE, 0x30}).length == 5 && dec({0x66, 0x41, 0x0F, 0xAE, 0x30}).op == ce::Op::clwb,
++          "clwb [r8]");
++    check(dec({0x0F, 0xAE, 0x31}).op == ce::Op::none, "0F AE /6 without 66 is xsaveopt");
++    check(dec({0x66, 0x0F, 0xAE, 0xF1}).op == ce::Op::none, "66 0F AE /6 with a register is not clwb");
++    check(dec({0x66, 0x0F, 0xAE, 0x39}).op == ce::Op::none, "66 0F AE /7 is clflushopt");
++    check(dec({0x66, 0x0F, 0xAE, 0x74, 0x01}).op == ce::Op::none, "a cut-off clwb is not decoded");
++    check(dec({0x0F, 0x0B}).op == ce::Op::none, "ud2 is not handled");
++}
++
++void test_bits() {
++    check(ce::insert_bits(0xFFFFFFFFFFFFFFFFull, 0, 8, 4) == 0xFFFFFFFFFFFFF00Full, "insert 8 at 4");
++    check(ce::insert_bits(0, 0xABCD, 16, 48) == 0xABCD000000000000ull, "insert 16 at 48");
++    check(ce::insert_bits(0x1234, 0xFEDCBA9876543210ull, 0, 0) == 0xFEDCBA9876543210ull, "insert len 0 is 64");
++    check(ce::insert_bits(0, 0xFF, 8, 60) == 0xF000000000000000ull, "a field past bit 63 keeps what fits");
++    check(ce::extract_bits(0xFEDCBA9876543210ull, 8, 4) == 0x21, "extract 8 at 4");
++    check(ce::extract_bits(0xFEDCBA9876543210ull, 0, 0) == 0xFEDCBA9876543210ull, "extract len 0 is 64");
++    check(ce::extract_bits(0xFEDCBA9876543210ull, 16, 56) == 0xFE, "extract past bit 63 zero-fills");
++}
++
++void test_apply() {
++    CONTEXT c{};
++    c.Rip = 0x1000;
++    c.FltSave.XmmRegisters[0].Low = 0x1111111111111111ull;
++    c.FltSave.XmmRegisters[0].High = 0x2222222222222222ll;
++    c.FltSave.XmmRegisters[1].Low = 0xAB;
++    check(ce::apply(dec({0xF2, 0x0F, 0x78, 0xC1, 0x08, 0x10}), &c), "apply insertq");
++    check(c.FltSave.XmmRegisters[0].Low == 0x1111111111AB1111ull && c.Rip == 0x1006, "insertq result and rip");
++    check(c.FltSave.XmmRegisters[0].High == 0, "insertq zeroes the upper quadword, as a Zen 3 does");
++
++    c.FltSave.XmmRegisters[2].Low = 0xFFFF;
++    c.FltSave.XmmRegisters[2].High = (20ll << 8) | 12;  // len 12 at bits 69:64, idx 20 at bits 77:72 (APM vol. 4)
++    c.FltSave.XmmRegisters[3].Low = 0;
++    check(ce::apply(dec({0xF2, 0x0F, 0x79, 0xDA}), &c), "apply insertq reg");  // insertq xmm3, xmm2
++    check(c.FltSave.XmmRegisters[3].Low == (0xFFFull << 20), "insertq reg takes len and idx from the upper half");
++
++    // Measured on a Zen 3 in #7111's review: control 0x0810 (len 16 in bits 5:0, idx 8 in bits 13:8 of the upper
++    // quadword) inserts 16 bits of 0xAB at bit 8 of 0x1234.
++    c.FltSave.XmmRegisters[6].Low = 0x1234;
++    c.FltSave.XmmRegisters[7].Low = 0xAB;
++    c.FltSave.XmmRegisters[7].High = 0x0810;
++    check(ce::apply(dec({0xF2, 0x0F, 0x79, 0xF7}), &c) && c.FltSave.XmmRegisters[6].Low == 0xAB34,
++          "insertq reg: the measured 0x0810 case");  // insertq xmm6, xmm7
++
++    c.FltSave.XmmRegisters[4].Low = 0xFEDCBA9876543210ull;
++    c.FltSave.XmmRegisters[5].Low = (4 << 8) | 8;  // idx 4 at bits 13:8, len 8 at bits 5:0
++    check(ce::apply(dec({0x66, 0x0F, 0x79, 0xE5}), &c), "apply extrq reg");  // extrq xmm4, xmm5
++    check(c.FltSave.XmmRegisters[4].Low == 0x21, "extrq reg result");
++
++    alignas(64) static uint8_t line[128];
++    std::memset(line, 0xEE, sizeof line);
++    c.Rax = reinterpret_cast<uint64_t>(line + 64 + 17);
++    const uint64_t rip = c.Rip;
++    check(ce::apply(dec({0x0F, 0x01, 0xFC}), &c) && c.Rip == rip + 3, "apply clzero");
++    bool zeroed = true, kept = true;
++    for (int i = 64; i < 128; ++i) zeroed &= line[i] == 0;
++    for (int i = 0; i < 64; ++i) kept &= line[i] == 0xEE;
++    check(zeroed && kept, "clzero zeroes exactly the line rax points into");
++
++    c.Rax = 0x10;  // the null page: not writable, so the write fault the CPU would raise is reported
++    EXCEPTION_RECORD fault{};
++    check(!ce::apply(dec({0x0F, 0x01, 0xFC}), &c, &fault) && c.Rip == rip + 3,
++          "clzero on an unwritable line is refused and leaves rip");
++    check(fault.ExceptionCode == STATUS_ACCESS_VIOLATION && fault.NumberParameters == 2 &&
++              fault.ExceptionInformation[0] == 1 && fault.ExceptionInformation[1] == 0,
++          "clzero on an unwritable line reports a write access violation at the line");
++}
++
++// ---- Running the real encodings ----
++
++using Fn = void (*)(const void* in, void* out);
++
++struct Code {
++    uint8_t* mem = nullptr;
++    explicit Code(std::initializer_list<uint8_t> bytes) {
++        mem = static_cast<uint8_t*>(VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
++        if (mem) std::memcpy(mem, bytes.begin(), bytes.size());
++        FlushInstructionCache(GetCurrentProcess(), mem, 4096);
++    }
++    ~Code() { if (mem) VirtualFree(mem, 0, MEM_RELEASE); }
++    Fn fn() const { return reinterpret_cast<Fn>(mem); }
++};
++
++bool run(const Code& code, const void* in, void* out, DWORD* exception) {
++    *exception = 0;
++    __try {
++        code.fn()(in, out);
++        return true;
++    } __except (*exception = GetExceptionCode(), EXCEPTION_EXECUTE_HANDLER) {
++        return false;
++    }
++}
++
++const char* path(bool host_has) { return host_has ? "native" : "emulated"; }
++
++void test_live(const ce::Host& host) {
++    DWORD ex = 0;
++    alignas(32) uint64_t in[8] = {}, out[8] = {};
++
++    // movdqu xmm0,[rcx]; movdqu xmm1,[rcx+16]; insertq xmm0,xmm1,12,20; movdqu [rdx],xmm0; ret
++    Code insq({0xF3, 0x0F, 0x6F, 0x01, 0xF3, 0x0F, 0x6F, 0x49, 0x10, 0xF2, 0x0F, 0x78, 0xC1, 12, 20,
++               0xF3, 0x0F, 0x7F, 0x02, 0xC3});
++    in[0] = 0x0123456789ABCDEFull;
++    in[1] = 0x5555555555555555ull;
++    in[2] = 0xFFFFFFFFFFFFFABCull;
++    check(run(insq, in, out, &ex), "insertq imm ran");
++    check(out[0] == ce::insert_bits(in[0], in[2], 12, 20), "insertq imm result");
++    std::printf("insertq imm: %s\n", path(host.sse4a));
++
++    // same with the register form: insertq xmm0, xmm1 (len in xmm1[69:64], idx in xmm1[77:72])
++    Code insr({0xF3, 0x0F, 0x6F, 0x01, 0xF3, 0x0F, 0x6F, 0x49, 0x10, 0xF2, 0x0F, 0x79, 0xC1,
++               0xF3, 0x0F, 0x7F, 0x02, 0xC3});
++    in[3] = (7ull << 8) | 33;  // len 33, idx 7
++    check(run(insr, in, out, &ex), "insertq reg ran");
++    check(out[0] == ce::insert_bits(in[0], in[2], 33, 7), "insertq reg result");
++
++    // movdqu xmm0,[rcx]; extrq xmm0,9,13; movdqu [rdx],xmm0; ret
++    Code exti({0xF3, 0x0F, 0x6F, 0x01, 0x66, 0x0F, 0x78, 0xC0, 9, 13, 0xF3, 0x0F, 0x7F, 0x02, 0xC3});
++    check(run(exti, in, out, &ex), "extrq imm ran");
++    check(out[0] == ce::extract_bits(in[0], 9, 13), "extrq imm result");
++
++    // movdqu xmm0,[rcx]; movdqu xmm1,[rcx+16]; extrq xmm0,xmm1; movdqu [rdx],xmm0; ret
++    Code extr({0xF3, 0x0F, 0x6F, 0x01, 0xF3, 0x0F, 0x6F, 0x49, 0x10, 0x66, 0x0F, 0x79, 0xC1,
++               0xF3, 0x0F, 0x7F, 0x02, 0xC3});
++    in[2] = (40ull << 8) | 20;
++    check(run(extr, in, out, &ex), "extrq reg ran");
++    check(out[0] == ce::extract_bits(in[0], 20, 40), "extrq reg result");
++    std::printf("extrq: %s\n", path(host.sse4a));
++
++    // The upper half of ymm0 survives an emulated (legacy SSE) insertq:
++    // vmovdqu ymm0,[rcx]; vmovdqu ymm1,[rcx+32]; insertq xmm0,xmm1,8,8; vmovdqu [rdx],ymm0; vzeroupper; ret
++    Code ymm({0xC5, 0xFE, 0x6F, 0x01, 0xC5, 0xFE, 0x6F, 0x49, 0x20, 0xF2, 0x0F, 0x78, 0xC1, 8, 8,
++              0xC5, 0xFE, 0x7F, 0x02, 0xC5, 0xF8, 0x77, 0xC3});
++    for (int i = 0; i < 8; ++i) in[i] = 0x1010101010101010ull * (i + 1);
++    std::memset(out, 0, sizeof out);
++    check(run(ymm, in, out, &ex), "insertq between AVX code ran");
++    check(out[0] == ce::insert_bits(in[0], in[4], 8, 8), "insertq between AVX code: low quadword");
++    check(out[2] == in[2] && out[3] == in[3], "insertq keeps ymm0[255:128]");
++    if (!host.sse4a) check(out[1] == 0, "emulated insertq zeroes xmm0[127:64], as a Zen 3 does");
++
++    // mov rax,rcx; clzero; ret
++    Code clz({0x48, 0x89, 0xC8, 0x0F, 0x01, 0xFC, 0xC3});
++    alignas(64) static uint8_t lines[192];
++    std::memset(lines, 0x5A, sizeof lines);
++    check(run(clz, lines + 64 + 40, nullptr, &ex), "clzero ran");
++    bool ok = true;
++    for (int i = 0; i < 192; ++i) ok &= lines[i] == ((i >= 64 && i < 128) ? 0 : 0x5A);
++    check(ok, "clzero zeroed one line");
++    std::printf("clzero: %s\n", path(host.clzero));
++
++    // A read-only line: the CPU and the handler both raise a write access violation, not #UD.
++    if (auto* ro = static_cast<uint8_t*>(VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE))) {
++        DWORD old = 0;
++        VirtualProtect(ro, 4096, PAGE_READONLY, &old);
++        check(!run(clz, ro + 128, nullptr, &ex) && ex == STATUS_ACCESS_VIOLATION,
++              "clzero on a read-only line raises an access violation");
++        VirtualFree(ro, 0, MEM_RELEASE);
++    }
++    // The same after the page was written, so it is resident and the handler answers from the working set: it must
++    // still see the read-only protection, and a guard page must still report its guard.
++    if (auto* ro = static_cast<uint8_t*>(VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE))) {
++        std::memset(ro, 0x5A, 4096);
++        DWORD old = 0;
++        VirtualProtect(ro, 4096, PAGE_READONLY, &old);
++        check(!run(clz, ro + 128, nullptr, &ex) && ex == STATUS_ACCESS_VIOLATION,
++              "clzero on a resident read-only line raises an access violation");
++        VirtualProtect(ro, 4096, PAGE_READWRITE | PAGE_GUARD, &old);
++        check(!run(clz, ro + 128, nullptr, &ex) && ex == STATUS_GUARD_PAGE_VIOLATION,
++              "clzero on a resident guard page raises a guard-page violation");
++        check(run(clz, ro + 128, nullptr, &ex) && ro[128] == 0 && ro[191] == 0 && ro[192] == 0x5A,
++              "clzero after the guard is gone zeroes the line");
++        VirtualFree(ro, 0, MEM_RELEASE);
++    }
++    if (!host.clzero) {  // the emulated path accepts the 66 prefix: mov rax,rcx; 66 clzero; ret
++        Code clz66({0x48, 0x89, 0xC8, 0x66, 0x0F, 0x01, 0xFC, 0xC3});
++        std::memset(lines, 0x5A, sizeof lines);
++        check(run(clz66, lines + 130, nullptr, &ex) && lines[128] == 0 && lines[191] == 0 && lines[127] == 0x5A,
++              "clzero with 66 emulated");
++    }
++
++    // mov rax,rcx; xor ecx,ecx; xor edx,edx; monitorx; xor eax,eax; xor ecx,ecx; mwaitx; ret
++    // (no timer: an interrupt or a store ends a native wait; the emulated one returns at once)
++    Code mon({0x48, 0x89, 0xC8, 0x31, 0xC9, 0x31, 0xD2, 0x0F, 0x01, 0xFA, 0x31, 0xC0, 0x31, 0xC9, 0x0F, 0x01, 0xFB,
++              0xC3});
++    check(run(mon, lines, nullptr, &ex), "monitorx/mwaitx ran");
++    std::printf("monitorx/mwaitx: %s\n", path(host.monitorx));
++
++    // xor eax,eax; clwb [rcx]; clwb [rcx+rax+8]; mov dword [rdx],1; ret
++    Code wb({0x31, 0xC0, 0x66, 0x0F, 0xAE, 0x31, 0x66, 0x0F, 0xAE, 0x74, 0x01, 0x08, 0xC7, 0x02, 0x01, 0, 0, 0,
++             0xC3});
++    uint32_t marker = 0;
++    check(run(wb, lines, &marker, &ex) && marker == 1, "clwb ran and execution continued after it");
++    std::printf("clwb: %s\n", path(host.clwb));
++
++    // A #UD the handler does not know stays an illegal-instruction exception: ud2; ret
++    Code ud({0x0F, 0x0B, 0xC3});
++    check(!run(ud, nullptr, nullptr, &ex) && ex == STATUS_ILLEGAL_INSTRUCTION, "ud2 still faults");
++}
++}  // namespace
++
++int main() {
++    test_decode();
++    test_bits();
++    test_apply();
++    const ce::Host host = ce::detect_host();
++    std::printf("host: SSE4a %d, MONITORX %d, CLZERO %d, CLWB %d\n", host.sse4a, host.monitorx, host.clzero,
++                host.clwb);
++    check(ce::install(), "install the handler");
++    test_live(host);
++    if (failures) {
++        std::fprintf(stderr, "%d failure(s)\n", failures);
++        return 1;
++    }
++    std::printf("cpu_emulation: all checks passed\n");
++    return 0;
++}
+diff --git a/tests/test_cpu_feature_scan.py b/tests/test_cpu_feature_scan.py
+new file mode 100644
+index 0000000000..0a2941e1e4
+--- /dev/null
++++ b/tests/test_cpu_feature_scan.py
+@@ -0,0 +1,267 @@
++"""Unit tests for tools/cpu_feature_scan.py on hand-written dumpbin-style listings and a small synthetic PE.
++
++The listings are written here line by line and the PE carries only headers and a .pdata table, so the test needs
++no game files, no dumpbin and no third-party packages.
++
++    python -I tests/test_cpu_feature_scan.py
++"""
++import io
++import json
++import os
++import struct
++import sys
++import tempfile
++import unittest
++from contextlib import redirect_stderr, redirect_stdout
++
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++TOOLS_DIR = os.path.join(ROOT, "tools")
++if TOOLS_DIR not in sys.path:
++    sys.path.insert(0, TOOLS_DIR)
++
++import cpu_feature_scan as scan  # noqa: E402
++
++BASE = 0x140000000
++
++
++def listing(*rows):
++    """Rows are (rva, 'mnemonic operands'); written as `dumpbin /disasm:nobytes` prints them."""
++    out = ["Dump of file synthetic.exe\n", "\n", "File Type: EXECUTABLE IMAGE\n", "\n"]
++    for rva, text in rows:
++        mnem, _, ops = text.partition(" ")
++        out.append(f"  {BASE + rva:016X}: {mnem:<11} {ops}".rstrip() + "\n")
++    return out
++
++
++def pe_with_pdata(ranges, image_base=BASE, size_override=None):
++    """An x64 PE whose only content is a .pdata section holding `ranges` as RUNTIME_FUNCTION entries."""
++    pdata = b"".join(struct.pack("<III", b, e, 0) for b, e in ranges)
++    raw = pdata + b"\0" * (-len(pdata) % 0x200 or 0x200)
++    buf = bytearray(0x200 + len(raw))
++    buf[0:2] = b"MZ"
++    struct.pack_into("<I", buf, 0x3C, 0x40)
++    buf[0x40:0x44] = b"PE\0\0"
++    struct.pack_into("<HHIIIHH", buf, 0x44, 0x8664, 1, 0, 0, 0, 240, 0x22)
++    opt = 0x58
++    struct.pack_into("<H", buf, opt, 0x20B)
++    struct.pack_into("<Q", buf, opt + 24, image_base)
++    struct.pack_into("<II", buf, opt + 56, 0x1000 + len(raw), 0x200)
++    struct.pack_into("<H", buf, opt + 68, 3)
++    struct.pack_into("<I", buf, opt + 108, 16)
++    struct.pack_into("<II", buf, opt + 112 + 3 * 8, 0x1000, len(pdata) if size_override is None else size_override)
++    sec = opt + 240
++    buf[sec:sec + 8] = b".pdata\0\0"
++    struct.pack_into("<IIII", buf, sec + 8, len(raw), 0x1000, len(raw), 0x200)
++    struct.pack_into("<I", buf, sec + 36, 0x40000040)
++    buf[0x200:0x200 + len(raw)] = raw
++    return bytes(buf)
++
++
++class ClassifyTest(unittest.TestCase):
++    def check(self, text, feature):
++        mnem, _, ops = text.partition(" ")
++        self.assertEqual(scan.classify(mnem, ops), feature, text)
++
++    def test_amd_only(self):
++        self.check("insertq xmm0,xmm1,10h,8", "SSE4A")
++        self.check("extrq xmm2,8,4", "SSE4A")
++        self.check("movntsd qword ptr [rax],xmm0", "SSE4A")
++        self.check("clzero", "CLZERO")
++        self.check("monitorx rax,rcx,rdx", "MONITORX")
++        self.check("mwaitx", "MONITORX")
++        self.check("rdpru", "RDPRU")
++        self.check("vpperm xmm0,xmm1,xmm2,xmm3", "XOP")
++        self.check("vfmaddps xmm0,xmm1,xmm2,xmm3", "FMA4")
++        self.check("blcfill eax,ecx", "TBM")
++        for feature in ("SSE4A", "CLZERO", "MONITORX", "RDPRU", "XOP", "FMA4", "TBM", "3DNOW"):
++            self.assertEqual(scan.FEATURES[feature][0], "amd-only")
++
++    def test_newer_intel(self):
++        self.check("clwb byte ptr [rcx]", "CLWB")
++        self.check("sha256rnds2 xmm1,xmm2,xmm0", "SHA")
++        self.check("rdpid rax", "RDPID")
++
++    def test_fma3_is_baseline_and_fma4_is_not(self):
++        self.check("vfmadd213ps ymm0,ymm1,ymm2", "FMA")
++        self.check("vfnmsub231sd xmm0,xmm1,xmm2", "FMA")
++        self.check("vfmaddsub231ps ymm0,ymm1,ymm2", "FMA")
++        self.check("vfmaddsubps ymm0,ymm1,ymm2,ymm3", "FMA4")
++
++    def test_width_decides_vaes_and_vpclmulqdq(self):
++        self.check("aesenc xmm0,xmm1", "AES")
++        self.check("vaesenc xmm0,xmm1,xmm2", "AES")
++        self.check("vaesenc ymm0,ymm1,ymm2", "VAES")
++        self.check("vpclmulqdq xmm0,xmm1,xmm2,0", "PCLMULQDQ")
++        self.check("vpclmulqdq ymm0,ymm1,ymm2,11h", "VPCLMULQDQ")
++
++    def test_avx_levels(self):
++        self.check("vaddps ymm0,ymm1,ymm2", "AVX")
++        self.check("vmovups xmmword ptr [rax],xmm0", "AVX")
++        self.check("vzeroupper", "AVX")
++        self.check("vpaddd ymm0,ymm1,ymm2", "AVX2")
++        self.check("vpaddd xmm0,xmm1,xmm2", "AVX")
++        self.check("vpbroadcastd xmm0,xmm1", "AVX2")
++        self.check("vaddps zmm0,zmm1,zmm2", "AVX512")
++        self.check("vaddps ymm0{k1},ymm1,ymm2", "AVX512")
++        self.check("kmovw k1,eax", "AVX512")
++
++    def test_privileged_and_kernel_calls(self):
++        self.check("in al,dx", "PORT-IO")
++        self.check("out dx,al", "PORT-IO")
++        self.check("hlt", "SYSTEM")
++        self.check("cli", "SYSTEM")
++        self.check("rdmsr", "SYSTEM")
++        self.check("mov rax,cr0", "SYSTEM")
++        self.check("mov dr7,rax", "SYSTEM")
++        self.check("xsetbv", "XSETBV")
++        self.check("mwait", "MONITOR")
++        self.check("syscall", "SYSCALL")
++        self.check("int 2Eh", "INT")
++        self.check("int 0B9h", "INT")
++
++    def test_windows_served_interrupts_are_not_flagged(self):
++        for vector in ("3", "29h", "2Ch", "2Dh"):
++            self.check(f"int {vector}", None)
++
++    def test_host_queries(self):
++        self.check("cpuid", "CPUID")
++        self.check("xgetbv", "XGETBV")
++        self.check("rdtscp", "RDTSC")
++
++    def test_prefixes_are_skipped(self):
++        self.check("lock cmpxchg16b xmmword ptr [r8]", "CX16")
++        self.check("xacquire lock cmpxchg16b xmmword ptr [r8]", "CX16")
++        self.check("lock add dword ptr [rax],1", None)
++        self.check("rep stos byte ptr [rdi]", None)
++
++    def test_plain_code_needs_nothing(self):
++        for text in ("mov rax,qword ptr [rcx+18h]", "add rsp,28h", "ret", "movaps xmm0,xmmword ptr [rcx]",
++                     "pshufb xmm0,xmm1", "mov rax,rcx", "lea rax,[rcx+8]", "nop"):
++            self.check(text, None)
++
++    def test_every_mnemonic_names_a_known_feature(self):
++        for mnem, feature in scan.MNEMONICS.items():
++            self.assertIn(feature, scan.FEATURES, mnem)
++        for feature, (cls, _note) in scan.FEATURES.items():
++            self.assertIn(cls, scan.CLASSES, feature)
++
++
++class FunctionsTest(unittest.TestCase):
++    def test_ranges_merge_and_contain(self):
++        f = scan.Functions([(0x2000, 0x2010), (0x1000, 0x1100), (0x1100, 0x1180), (0x3000, 0x3000)])
++        self.assertEqual(f.count, 4)
++        self.assertTrue(f.contains(0x1000))
++        self.assertTrue(f.contains(0x117F))
++        self.assertFalse(f.contains(0x1180))
++        self.assertFalse(f.contains(0xFFF))
++        self.assertTrue(f.contains(0x200F))
++        self.assertFalse(f.contains(0x3000))  # a zero-length entry covers nothing
++
++    def test_from_image_reads_pdata(self):
++        img = scan.PeImage(pe_with_pdata([(0x1000, 0x1040), (0x1040, 0x1100)]))
++        f = scan.Functions.from_image(img)
++        self.assertEqual(f.count, 2)
++        self.assertTrue(f.contains(0x10FF))
++        self.assertFalse(f.contains(0x1100))
++
++    def test_partial_trailing_entry_is_ignored(self):
++        img = scan.PeImage(pe_with_pdata([(0x1000, 0x1040), (0x2000, 0x2040)], size_override=20))
++        self.assertEqual(scan.Functions.from_image(img).count, 1)
++
++    def test_image_without_pdata(self):
++        img = scan.PeImage(pe_with_pdata([], size_override=0))
++        self.assertEqual(scan.Functions.from_image(img).count, 0)
++
++
++ROWS = (
++    (0x1000, "push rbx"),
++    (0x1001, "insertq xmm0,xmm1,10h,8"),
++    (0x1006, "vfmadd213ps ymm0,ymm1,ymm2"),
++    (0x100B, "cpuid"),
++    (0x100D, "int 3"),
++    (0x2000, "clzero"),        # a leaf routine with no .pdata entry
++    (0x2003, "in al,dx"),       # data decoded as code
++    (0x2004, "ret"),
++)
++
++
++class ScanTest(unittest.TestCase):
++    def test_hits_are_split_by_pdata(self):
++        stats = {}
++        functions = scan.Functions([(0x1000, 0x1010)])
++        report = scan.summarize(scan.scan(listing(*ROWS), functions, BASE, stats), stats, functions)
++        self.assertEqual(report["instructions"], 8)
++        self.assertEqual(report["instructions_in_functions"], 5)
++        feats = report["features"]
++        self.assertEqual(list(feats), ["CLZERO", "SSE4A", "PORT-IO", "CPUID", "FMA"])
++        self.assertEqual((feats["SSE4A"]["in_functions"], feats["SSE4A"]["elsewhere"]), (1, 0))
++        self.assertEqual((feats["CLZERO"]["in_functions"], feats["CLZERO"]["elsewhere"]), (0, 1))
++        self.assertEqual(feats["CLZERO"]["sites"], [{"rva": 0x2000, "in_function": False}])
++        self.assertEqual(feats["CPUID"]["sites"], [])  # host queries are counted, not listed
++        self.assertNotIn("INT", feats)
++
++    def test_base_is_inferred_without_an_image(self):
++        stats = {}
++        hits = list(scan.scan(listing(*ROWS), None, None, stats))
++        self.assertIn(("SSE4A", 0x1001, None), hits)
++
++
++class CliTest(unittest.TestCase):
++    def run_main(self, *argv):
++        out, err = io.StringIO(), io.StringIO()
++        with redirect_stdout(out), redirect_stderr(err):
++            code = scan.main(list(argv))
++        return code, out.getvalue(), err.getvalue()
++
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.listing = os.path.join(self.tmp.name, "listing.txt")
++        with open(self.listing, "w", encoding="utf-8", newline="\n") as f:
++            f.writelines(listing(*ROWS))
++        self.image = os.path.join(self.tmp.name, "image.bin")
++        with open(self.image, "wb") as f:
++            f.write(pe_with_pdata([(0x1000, 0x1010)]))
++
++    def test_text_report_with_image(self):
++        code, out, _ = self.run_main(self.listing, "--image", self.image, "--sites")
++        self.assertEqual(code, 0)
++        self.assertIn("instructions scanned: 8", out)
++        self.assertIn(".pdata entries: 1, instructions inside them: 5", out)
++        self.assertIn("flagged features: 3 (CLZERO, SSE4A, PORT-IO)", out)
++        self.assertIn("  SSE4A +0x1001 in .pdata", out)
++        self.assertIn("  CLZERO +0x2000 outside .pdata", out)
++
++    def test_json_report_without_image(self):
++        code, out, _ = self.run_main(self.listing, "--json")
++        self.assertEqual(code, 0)
++        report = json.loads(out)
++        self.assertIsNone(report["pdata_entries"])
++        self.assertEqual(report["features"]["SSE4A"]["total"], 1)
++        self.assertEqual(report["features"]["SSE4A"]["sites"], [{"rva": 0x1001, "in_function": None}])
++
++    def test_listing_without_instructions_exits_2(self):
++        empty = os.path.join(self.tmp.name, "empty.txt")
++        with open(empty, "w", encoding="utf-8", newline="\n") as f:
++            f.write("not a listing\n")
++        code, out, err = self.run_main(empty)
++        self.assertEqual(code, 2)
++        self.assertEqual(out, "")
++        self.assertIn("no instructions found", err)
++
++    def test_missing_input_exits_2(self):
++        code, _, err = self.run_main(os.path.join(self.tmp.name, "nope.txt"))
++        self.assertEqual(code, 2)
++        self.assertIn("not found", err)
++
++    def test_bad_image_exits_2(self):
++        bad = os.path.join(self.tmp.name, "bad.bin")
++        with open(bad, "wb") as f:
++            f.write(b"MZ" + b"\0" * 10)
++        code, _, err = self.run_main(self.listing, "--image", bad)
++        self.assertEqual(code, 2)
++        self.assertIn("bad.bin", err)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tools/cpu_feature_scan.py b/tools/cpu_feature_scan.py
+new file mode 100644
+index 0000000000..432f68cdce
+--- /dev/null
++++ b/tools/cpu_feature_scan.py
+@@ -0,0 +1,331 @@
++"""Which CPU instructions an x64 image needs, and which of them a desktop CPU may not run.
++
++Usage:
++    python -I tools/cpu_feature_scan.py <image.exe|image.dll> [--sites] [--json]
++    python -I tools/cpu_feature_scan.py <dumpbin-listing.txt> [--image <image>] [--base 0x140000000] [--sites] [--json]
++
++The Xbox Series CPU is an AMD Zen 2. The runtime maps the game's code and runs it as-is (docs/design.md, "Why a
++loader before a recompiler"), so an instruction the host CPU lacks raises #UD (STATUS_ILLEGAL_INSTRUCTION) where it
++is reached, and a privileged one faults. This tool lists those instructions: it streams MSVC
++`dumpbin /disasm:nobytes` (as tools/inline_scan.py does), names the CPUID feature or privilege class of each
++instruction, and counts them per feature. Each feature has one of these classes:
++
++    amd-only     no Intel CPU has it (SSE4a, CLZERO, MONITORX/MWAITX, RDPRU, XOP, FMA4, TBM): #UD on every
++                 Intel host
++    newer-intel  Zen 2 has it, but Intel CPUs only from a later generation on (CLWB, SHA, RDPID): #UD on older
++                 Intel hosts, such as the client Skylake to Comet Lake parts
++    not-zen2     the console CPU does not have it (AVX-512, VAES, VPCLMULQDQ, WAITPKG, ...): a hit is most likely
++                 data that the linear disassembly read as code
++    privileged   ring 0 only (port I/O, CLI/HLT, MSRs, control registers, XSETBV, MONITOR/MWAIT, ...): faults in user
++                 mode on every PC
++    kernel-call  SYSCALL, SYSENTER and INT n other than the debug/assert/fast-fail vectors: a direct call into the
++                 console kernel
++    host-query   CPUID, XGETBV, RDTSC(P), RDPID: run on every host but answer with the host's values
++    baseline     a feature every x86-64 PC the runtime targets has (AVX2, FMA, BMI, AES, ...): counted, not flagged
++
++The image's `.pdata` table (read from the PE, or from `--image` for a listing) splits each count into hits inside
++a function's range and hits elsewhere. A linear disassembly also decodes padding, jump tables and other data in the
++code sections, so a hit outside every `.pdata` range is often not code; but a leaf function that does not touch the
++stack has no `.pdata` entry either, so read those sites by hand (`--sites` prints their RVAs).
++
++Nothing is executed. The output is counts, feature names and RVAs, no code bytes. An input with no instructions in
++it exits 2 instead of reporting zero hits. Standard library only.
++"""
++from __future__ import annotations
++
++import argparse
++import bisect
++import json
++import os
++import re
++import struct
++import sys
++from collections import Counter, defaultdict
++from pathlib import Path
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++import inline_scan  # noqa: E402
++from pe_inspect import DIR_EXCEPTION, PeFormatError, PeImage  # noqa: E402
++
++FLAGGED = ("amd-only", "newer-intel", "not-zen2", "privileged", "kernel-call")
++CLASSES = FLAGGED + ("host-query", "baseline")
++
++# feature -> (class, what a host without it does)
++FEATURES = {
++    "SSE4A": ("amd-only", "#UD on every Intel CPU"),
++    "CLZERO": ("amd-only", "#UD on every Intel CPU"),
++    "MONITORX": ("amd-only", "#UD on every Intel CPU"),
++    "RDPRU": ("amd-only", "#UD on every Intel CPU; Zen 2 and later"),
++    "XOP": ("amd-only", "#UD on every Intel CPU and on Zen"),
++    "FMA4": ("amd-only", "#UD on every Intel CPU; not reported by Zen"),
++    "TBM": ("amd-only", "#UD on every Intel CPU and on Zen"),
++    "3DNOW": ("amd-only", "#UD on every Intel CPU and on Zen"),
++    "CLWB": ("newer-intel", "#UD on Intel client CPUs before Ice Lake / Tiger Lake"),
++    "SHA": ("newer-intel", "#UD on Intel client CPUs before Ice Lake (Goldmont Atoms have it)"),
++    "RDPID": ("newer-intel", "#UD on Intel CPUs before Ice Lake"),
++    "AVX512": ("not-zen2", "not on the console CPU"),
++    "VAES": ("not-zen2", "not on the console CPU (Zen 3 and later)"),
++    "VPCLMULQDQ": ("not-zen2", "not on the console CPU (Zen 3 and later)"),
++    "WAITPKG": ("not-zen2", "Intel only"),
++    "MOVDIR": ("not-zen2", "Intel only"),
++    "SERIALIZE": ("not-zen2", "Intel only"),
++    "RTM": ("not-zen2", "Intel only"),
++    "GFNI": ("not-zen2", "not on the console CPU"),
++    "PKU": ("not-zen2", "not on the console CPU (Zen 3 and later)"),
++    "PORT-IO": ("privileged", "faults in user mode"),
++    "SYSTEM": ("privileged", "faults in user mode"),
++    "MONITOR": ("privileged", "faults in user mode on Windows"),
++    "XSETBV": ("privileged", "faults in user mode"),
++    "SYSCALL": ("kernel-call", "enters the host kernel with a console service number"),
++    "INT": ("kernel-call", "a software interrupt Windows does not serve for the title"),
++    "CPUID": ("host-query", "answers with the host CPU's vendor, family and features"),
++    "XGETBV": ("host-query", "answers with the host OS's enabled state"),
++    "RDTSC": ("host-query", "counts at the host's TSC rate"),
++    "AVX": ("baseline", ""), "AVX2": ("baseline", ""), "FMA": ("baseline", ""), "F16C": ("baseline", ""),
++    "BMI1": ("baseline", ""), "BMI2": ("baseline", ""), "LZCNT": ("baseline", ""), "POPCNT": ("baseline", ""),
++    "ADX": ("baseline", ""), "MOVBE": ("baseline", ""), "AES": ("baseline", ""), "PCLMULQDQ": ("baseline", ""),
++    "RDRAND": ("baseline", ""), "RDSEED": ("baseline", ""), "CLFLUSHOPT": ("baseline", ""),
++    "XSAVE": ("baseline", ""), "FSGSBASE": ("baseline", ""), "CX16": ("baseline", ""),
++    "PREFETCHW": ("baseline", ""), "SSE4.2": ("baseline", ""),
++}
++
++# Exact mnemonics (dumpbin spelling, lower case) -> feature.
++MNEMONICS: dict[str, str] = {}
++
++
++def _names(feature: str, *names: str):
++    for name in names:
++        MNEMONICS[name] = feature
++
++
++_names("SSE4A", "extrq", "insertq", "movntsd", "movntss")
++_names("CLZERO", "clzero")
++_names("MONITORX", "monitorx", "mwaitx")
++_names("RDPRU", "rdpru")
++_names("XOP", "vpperm", "vpcmov", "vprotb", "vprotw", "vprotd", "vprotq", "vpshab", "vpshaw", "vpshad", "vpshaq",
++       "vpshlb", "vpshlw", "vpshld", "vpshlq", "vfrczps", "vfrczpd", "vfrczss", "vfrczsd", "vpermil2ps", "vpermil2pd",
++       "vphaddbw", "vphaddbd", "vphaddbq", "vphaddwd", "vphaddwq", "vphadddq", "vphaddubw", "vphaddubd",
++       "vphaddubq", "vphadduwd", "vphadduwq", "vphaddudq", "vphsubbw", "vphsubwd", "vphsubdq", "vpmacssww",
++       "vpmacsww", "vpmacsswd", "vpmacswd", "vpmacssdd", "vpmacsdd", "vpmacssdql", "vpmacsdql", "vpmacssdqh",
++       "vpmacsdqh", "vpmadcsswd", "vpmadcswd", "vpcomb", "vpcomw", "vpcomd", "vpcomq", "vpcomub", "vpcomuw",
++       "vpcomud", "vpcomuq")
++_names("FMA4", *(f"{op}{t}" for op in ("vfmadd", "vfmsub", "vfnmadd", "vfnmsub") for t in ("ps", "pd", "ss", "sd")),
++       "vfmaddsubps", "vfmaddsubpd", "vfmsubaddps", "vfmsubaddpd")
++_names("TBM", "blcfill", "blci", "blcic", "blcmsk", "blcs", "blsfill", "blsic", "t1mskc", "tzmsk")
++_names("3DNOW", "femms", "pavgusb", "pf2id", "pfacc", "pfadd", "pfcmpeq", "pfcmpge", "pfcmpgt", "pfmax", "pfmin",
++       "pfmul", "pfrcp", "pfrcpit1", "pfrcpit2", "pfrsqit1", "pfrsqrt", "pfsub", "pfsubr", "pi2fd", "pmulhrw",
++       "pf2iw", "pfnacc", "pfpnacc", "pi2fw", "pswapd")
++_names("CLWB", "clwb")
++_names("SHA", "sha1rnds4", "sha1nexte", "sha1msg1", "sha1msg2", "sha256rnds2", "sha256msg1", "sha256msg2")
++_names("RDPID", "rdpid")
++_names("WAITPKG", "umonitor", "umwait", "tpause")
++_names("MOVDIR", "movdiri", "movdir64b", "enqcmd", "enqcmds")
++_names("SERIALIZE", "serialize")
++_names("RTM", "xbegin", "xend", "xabort", "xtest")
++_names("GFNI", "gf2p8affineqb", "gf2p8affineinvqb", "gf2p8mulb", "vgf2p8affineqb", "vgf2p8affineinvqb",
++       "vgf2p8mulb")
++_names("PKU", "rdpkru", "wrpkru")
++_names("AVX512", "kmovb", "kmovw", "kmovd", "kmovq", "kandw", "korw", "kxorw", "knotw", "kortestw", "kshiftlw",
++       "kshiftrw", "vpternlogd", "vpternlogq", "vpcompressd", "vpcompressq", "vpexpandd", "vpexpandq",
++       "vpermi2d", "vpermi2q", "vpermi2ps", "vpermi2pd", "vpermt2d", "vpermt2q", "vpermt2ps", "vpermt2pd")
++_names("PORT-IO", "in", "out", "ins", "insb", "insw", "insd", "outs", "outsb", "outsw", "outsd")
++_names("SYSTEM", "cli", "sti", "hlt", "rdmsr", "wrmsr", "rdpmc", "invd", "wbinvd", "wbnoinvd", "invlpg", "invpcid",
++       "lgdt", "lidt", "lldt", "ltr", "clts", "swapgs", "sysret", "sysretq", "sysexit", "lmsw",
++       "invlpga", "vmrun", "vmload", "vmsave", "stgi", "clgi", "skinit", "vmcall", "vmmcall", "rsm")
++_names("MONITOR", "monitor", "mwait")
++_names("XSETBV", "xsetbv")
++_names("SYSCALL", "syscall", "sysenter")
++_names("AVX", "vzeroupper", "vzeroall")
++_names("CPUID", "cpuid")
++_names("XGETBV", "xgetbv")
++_names("RDTSC", "rdtsc", "rdtscp")
++_names("F16C", "vcvtph2ps", "vcvtps2ph")
++_names("BMI1", "andn", "bextr", "blsi", "blsmsk", "blsr", "tzcnt")
++_names("BMI2", "bzhi", "mulx", "pdep", "pext", "rorx", "sarx", "shlx", "shrx")
++_names("LZCNT", "lzcnt")
++_names("POPCNT", "popcnt")
++_names("ADX", "adcx", "adox")
++_names("MOVBE", "movbe")
++_names("RDRAND", "rdrand")
++_names("RDSEED", "rdseed")
++_names("CLFLUSHOPT", "clflushopt")
++_names("XSAVE", "xsave", "xsave64", "xsaveopt", "xsaveopt64", "xsavec", "xsavec64", "xsaves", "xsaves64",
++       "xrstor", "xrstor64", "xrstors", "xrstors64")
++_names("FSGSBASE", "rdfsbase", "rdgsbase", "wrfsbase", "wrgsbase")
++_names("CX16", "cmpxchg16b")
++_names("PREFETCHW", "prefetchw")
++_names("SSE4.2", "crc32", "pcmpestri", "pcmpestrm", "pcmpistri", "pcmpistrm", "vpcmpestri", "vpcmpestrm",
++       "vpcmpistri", "vpcmpistrm")
++_names("AVX2", "vpbroadcastb", "vpbroadcastw", "vpbroadcastd", "vpbroadcastq", "vbroadcasti128", "vextracti128",
++       "vinserti128", "vperm2i128", "vpermd", "vpermq", "vpermps", "vpermpd", "vpmaskmovd", "vpmaskmovq",
++       "vpsllvd", "vpsllvq", "vpsrlvd", "vpsrlvq", "vpsravd", "vpgatherdd", "vpgatherdq", "vpgatherqd",
++       "vpgatherqq", "vgatherdps", "vgatherdpd", "vgatherqps", "vgatherqpd", "vpblendd")
++
++PREFIXES = {"lock", "rep", "repe", "repz", "repne", "repnz", "xacquire", "xrelease", "bnd", "notrack"}
++ALLOWED_INT = {3, 0x29, 0x2C, 0x2D}  # breakpoint, __fastfail, __assert, debug service: Windows serves them
++FMA3 = re.compile(r"^vf(?:n?m(?:add|sub)|maddsub|msubadd)(?:132|213|231)(?:ps|pd|ss|sd)$")
++AES = {"aesenc", "aesenclast", "aesdec", "aesdeclast", "aesimc", "aeskeygenassist"}
++CONTROL_REG = re.compile(r"\b[cd]r\d+\b")
++IMMEDIATE = re.compile(r"^([0-9A-F]+)h?$")
++ZMM = re.compile(r"\bzmm\d+\b|\{k\d\}")
++YMM = re.compile(r"\bymm\d+\b")
++
++
++def classify(mnem: str, ops: str) -> str | None:
++    """The feature (a FEATURES key) one dumpbin instruction needs, or None for the plain x86-64 baseline."""
++    while mnem in PREFIXES and ops:
++        mnem, _, ops = ops.partition(" ")
++        ops = ops.strip()
++    if mnem == "int":
++        m = IMMEDIATE.match(ops.strip())
++        return None if m and int(m.group(1), 16) in ALLOWED_INT else "INT"
++    if mnem == "int1" or mnem == "into":
++        return "INT"
++    if mnem == "mov" and CONTROL_REG.search(ops):
++        return "SYSTEM"
++    if ZMM.search(ops):
++        return "AVX512"
++    base = mnem[1:] if mnem.startswith("v") else mnem
++    if base in AES:
++        return "VAES" if mnem.startswith("v") and YMM.search(ops) else "AES"
++    if base == "pclmulqdq":
++        return "VPCLMULQDQ" if mnem.startswith("v") and YMM.search(ops) else "PCLMULQDQ"
++    if mnem in MNEMONICS:
++        return MNEMONICS[mnem]
++    if FMA3.match(mnem):
++        return "FMA"
++    if mnem.startswith("vp") and YMM.search(ops):
++        return "AVX2"  # a 256-bit integer operation
++    if mnem.startswith("v") and (YMM.search(ops) or "xmm" in ops):
++        return "AVX"
++    return None
++
++
++class Functions:
++    """The image's .pdata ranges, as sorted, merged [begin, end) RVA pairs."""
++
++    def __init__(self, ranges):
++        merged = []
++        for begin, end in sorted(r for r in ranges if r[1] > r[0]):
++            if merged and begin <= merged[-1][1]:
++                merged[-1][1] = max(merged[-1][1], end)
++            else:
++                merged.append([begin, end])
++        self.begins = [b for b, _ in merged]
++        self.ends = [e for _, e in merged]
++        self.count = len(ranges)
++
++    @classmethod
++    def from_image(cls, img: PeImage) -> "Functions":
++        rva, size = img.directory(DIR_EXCEPTION)
++        at = img.offset(rva, size) if rva and size else None
++        if at is None:
++            return cls([])
++        return cls([struct.unpack_from("<II", img.data, at + i)
++                    for i in range(0, size - size % 12, 12)])
++
++    def contains(self, rva: int) -> bool:
++        i = bisect.bisect_right(self.begins, rva) - 1
++        return i >= 0 and rva < self.ends[i]
++
++
++def scan(lines, functions: Functions | None, base: int | None, stats: dict | None = None):
++    """Yield (feature, rva, in_function) for every instruction that needs a feature. `stats` gets the counts."""
++    stats = {} if stats is None else stats
++    stats.update(instructions=0, in_functions=0)
++    for addr, mnem, ops in inline_scan.instructions(lines):
++        if base is None:
++            base = addr & ~0xFFFFFFF
++        rva = addr - base
++        inside = functions.contains(rva) if functions else None
++        stats["instructions"] += 1
++        stats["in_functions"] += bool(inside)
++        feature = classify(mnem, ops)
++        if feature:
++            yield feature, rva, inside
++
++
++def summarize(hits, stats: dict, functions: Functions | None) -> dict:
++    counts = defaultdict(Counter)
++    sites = defaultdict(list)
++    for feature, rva, inside in hits:
++        where = "unknown" if inside is None else "in_functions" if inside else "elsewhere"
++        counts[feature][where] += 1
++        if FEATURES[feature][0] in FLAGGED:
++            sites[feature].append({"rva": rva, "in_function": inside})
++    report = {"instructions": stats["instructions"],
++              "pdata_entries": functions.count if functions else None,
++              "instructions_in_functions": stats["in_functions"] if functions else None,
++              "features": {}}
++    order = {c: i for i, c in enumerate(CLASSES)}
++    for feature in sorted(counts, key=lambda f: (order[FEATURES[f][0]], f)):
++        cls, note = FEATURES[feature]
++        c = counts[feature]
++        report["features"][feature] = {"class": cls, "note": note, "total": sum(c.values()),
++                                       "in_functions": c["in_functions"], "elsewhere": c["elsewhere"],
++                                       "sites": sites.get(feature, [])}
++    return report
++
++
++def to_text(report: dict, show_sites: bool) -> str:
++    out = [f"instructions scanned: {report['instructions']}"]
++    if report["pdata_entries"] is not None:
++        out.append(f".pdata entries: {report['pdata_entries']}, instructions inside them: "
++                   f"{report['instructions_in_functions']}")
++    else:
++        out.append("no .pdata read (pass --image for a listing): hits are not split by function")
++    flagged = [f for f, r in report["features"].items() if r["class"] in FLAGGED]
++    out.append(f"flagged features: {len(flagged)}" + (f" ({', '.join(flagged)})" if flagged else ""))
++    out.append(f"{'feature':<12} {'class':<12} {'total':>9} {'in .pdata':>9} {'elsewhere':>9}  note")
++    for feature, r in report["features"].items():
++        known = report["pdata_entries"] is not None
++        inside = r["in_functions"] if known else "-"
++        elsewhere = r["elsewhere"] if known else "-"
++        out.append(f"{feature:<12} {r['class']:<12} {r['total']:>9} {inside:>9} {elsewhere:>9}  {r['note']}")
++    if show_sites:
++        for feature, r in report["features"].items():
++            for s in r["sites"]:
++                where = {True: "in .pdata", False: "outside .pdata", None: "?"}[s["in_function"]]
++                out.append(f"  {feature} +0x{s['rva']:x} {where}")
++    return "\n".join(out)
++
++
++def main(argv=None) -> int:
++    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    p.add_argument("source", type=Path, help="an x64 PE (disassembled with dumpbin) or a saved dumpbin listing")
++    p.add_argument("--image", type=Path, help="for a listing: the PE it came from, to read .pdata and the base")
++    p.add_argument("--base", type=lambda s: int(s, 16), help="image base (default: the PE's, else inferred)")
++    p.add_argument("--sites", action="store_true", help="print the RVA of every flagged instruction")
++    p.add_argument("--json", action="store_true", help="print the report as JSON")
++    args = p.parse_args(argv)
++    if not args.source.is_file():
++        print(f"{args.source} not found", file=sys.stderr)
++        return 2
++    is_image = args.source.suffix.lower() in (".exe", ".dll")
++    image_path = args.source if is_image else args.image
++    functions, base = None, args.base
++    if image_path is not None:
++        try:
++            img = PeImage(image_path.read_bytes())
++        except (OSError, PeFormatError) as e:
++            print(f"{image_path}: {e}", file=sys.stderr)
++            return 2
++        functions = Functions.from_image(img)
++        if base is None:
++            base = img.image_base
++    stats = {}
++    report = summarize(scan(inline_scan.read_lines(args.source), functions, base, stats), stats, functions)
++    if not stats["instructions"]:
++        print(f"{args.source}: no instructions found (not a dumpbin listing, or an image without code)",
++              file=sys.stderr)
++        return 2
++    print(json.dumps(report, indent=1) if args.json else to_text(report, args.sites))
++    return 0
++
++
++if __name__ == "__main__":
++    try:  # a redirected stdout is strict ANSI code page under -I; write '?' for what it cannot encode
++        sys.stdout.reconfigure(errors="replace")
++    except (AttributeError, ValueError, OSError):
++        pass
++    sys.exit(main())

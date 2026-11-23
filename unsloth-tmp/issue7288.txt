@@ -1,0 +1,26 @@
+state=open
+merge-order map for the boot-path prs, for whoever merges. facts from git ancestry and local windows builds only, no game data.
+
+**stops 16/17 + slot 26 (three prs, one stack)**
+- #7078 already contains #6964 (merged into it, `40360ccb4`), so #6964 is superseded once #7078 lands
+- #7110 is the stop-16 commit (`c7ca0f2d1`) on an older base and conflicts with main. stacked on top of #7078 it applies with one test-file conflict: `IAmNotSiob:stop16-on-7078` (`8177c85db`), building on win10/RTX 6000 now
+- suggested order: #7078  stop-16 commit  close #6964 / rebase #7110
+
+**xmem (stop 1, 2, 6)**
+- #6919 covers what #6709, #6814, #6878, #6908 and #6733 do in `XMemVirtualAlloc` (attribute words, `PAGE_GRAPHICS_*`, last-error/trace), and is the only one with the physical-page exports. all six edit `xmem.cpp`. #6919: windows build ok, `xmem` test passes (review on the pr)
+
+**stop 4 (TLS index 0)**
+- #4313 conflicts with main in `on_host_thread_event`; merged onto main at `IAmNotSiob:tls-4313-rebased` (main's `forget_ended_thread_id()` / `release_existing_blocks_of_this_thread()` ahead of the slot loops). windows: run_tiny_tls_ga + loader/TLS/xmem/xgameruntime tests pass
+
+**frame pacing**
+- #5797 contains #5701's commit (`879fd35a9`); #5701 is redundant
+
+**stop 3 (`XErrorReport`)**
+- #6582 has a one-paragraph doc conflict with main; resolved at `IAmNotSiob:xerr-check`, windows run in progress
+
+will add the two pending windows results as comments here.
+
+AI-assisted (Claude Code).
+
+**TL;DR:** #7078 ? #6964, #6919 ? five xmem prs, #5797 ? #5701; #4313/#6582/#7110 have ready-to-pull rebases on main.
+

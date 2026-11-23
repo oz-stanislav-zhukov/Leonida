@@ -1,0 +1,31 @@
+{"seq":1,"t":0.000007,"kind":"trace_open","pid":18056}
+{"seq":2,"t":0.875864,"kind":"map","module":"XboxBvhBuilder.dll","base":"0x180000000","size":"0xde000","relocated":false}
+{"seq":3,"t":0.876255,"kind":"map","module":"amd_fidelityfx_loader_xbox.dll","base":"0x1f5818c0000","size":"0x8000","relocated":true}
+{"seq":4,"t":0.944109,"kind":"map","module":"libHttpClient.GDK.dll","base":"0x1f581d40000","size":"0xf4000","relocated":true}
+{"seq":5,"t":0.947282,"kind":"map","module":"Bink2Scarlett.dll","base":"0x1f581c30000","size":"0x44000","relocated":true}
+{"seq":6,"t":0.949833,"kind":"map","module":"game_scarlett_master.exe","base":"0x140000000","size":"0xb06d000","relocated":false}
+{"seq":7,"t":0.949883,"kind":"dllmain","module":"XboxBvhBuilder.dll","result":1}
+{"seq":8,"t":0.987857,"kind":"dllmain","module":"amd_fidelityfx_loader_xbox.dll","result":1}
+{"seq":9,"t":0.987880,"kind":"dllmain","module":"libHttpClient.GDK.dll","result":1}
+{"seq":10,"t":0.987888,"kind":"dllmain","module":"Bink2Scarlett.dll","result":1}
+{"seq":11,"t":0.987893,"kind":"tls_callback","module":"game_scarlett_master.exe","at":"game_scarlett_master.exe+0x55dd4f4","reason":1}
+{"seq":12,"t":0.987897,"kind":"tls_callback","module":"game_scarlett_master.exe","at":"game_scarlett_master.exe+0x55e2ebc","reason":1}
+{"seq":13,"t":0.988334,"kind":"xmem_attributes","api":"XMemVirtualAlloc","attributes":"0x21","size":25769803776,"caller":"game_scarlett_master.exe+0x1e1d00f"}
+{"seq":14,"t":0.988367,"kind":"xmem_attributes","api":"XMemVirtualAlloc","attributes":"0x3","size":25769803776,"caller":"game_scarlett_master.exe+0x1e1d03e"}
+{"seq":15,"t":0.988387,"kind":"xmem_attributes","api":"XMemVirtualAlloc","attributes":"0x183","size":1228931072,"caller":"game_scarlett_master.exe+0x1e1d186"}
+{"seq":16,"t":0.988409,"kind":"xmem_attributes","api":"XMemVirtualAlloc","attributes":"0x283","size":2305818624,"caller":"game_scarlett_master.exe+0x1e1d4db"}
+{"seq":17,"t":0.989260,"kind":"xmem_attributes","api":"XMemVirtualAlloc","attributes":"0x181","size":20971520,"caller":"game_scarlett_master.exe+0x5ba6c35"}
+{"seq":18,"t":2.175634,"kind":"xmem_physical_pages","api":"XMemAllocatePhysicalPages","attributes":"0x280","pages":11360,"caller":"game_scarlett_master.exe+0x5eb27ac"}
+{"seq":19,"t":2.345936,"kind":"debug_string","text":"[OBS] "}
+{"seq":20,"t":2.345968,"kind":"debug_string","text":"[OBS] "}
+{"seq":21,"t":2.346003,"kind":"debug_string","text":"graphics-hook.dll loaded against process: gta6rt.exe"}
+{"seq":22,"t":2.346017,"kind":"debug_string","text":""}
+{"seq":23,"t":2.346021,"kind":"debug_string","text":"graphics-hook.dll loaded against process: gta6rt.exe"}
+{"seq":24,"t":2.346034,"kind":"debug_string","text":"[OBS] "}
+{"seq":25,"t":2.346039,"kind":"debug_string","text":""}
+{"seq":26,"t":2.346045,"kind":"debug_string","text":"(half life scientist) everything..  seems to be in order"}
+{"seq":27,"t":2.346051,"kind":"debug_string","text":""}
+{"seq":28,"t":2.346054,"kind":"debug_string","text":"[OBS] "}
+{"seq":29,"t":2.346066,"kind":"debug_string","text":"(half life scientist) everything..  seems to be in order"}
+{"seq":30,"t":2.346075,"kind":"debug_string","text":""}
+{"seq":31,"t":2.592140,"kind":"exception","code":"0xc0000005","at":"host:gta6rt.exe+0xefb99","access":"read","address":"0xd0","stack":["host:gta6rt.exe+0xefb99","game_scarlett_master.exe+0x2478713","game_scarlett_master.exe+0x19f4f54","game_scarlett_master.exe+0x580437e","game_scarlett_master.exe+0x43a4911","game_scarlett_master.exe+0x224070b","game_scarlett_master.exe+0x23cf00a","game_scarlett_master.exe+0x2215eca","host:KERNEL32.DLL+0x17374","host:ntdll.dll+0x4cc91"]}

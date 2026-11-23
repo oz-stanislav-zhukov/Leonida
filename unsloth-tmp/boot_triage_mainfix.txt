@@ -1,0 +1,11 @@
+startup trace: E:\Temp\Windows\leonida_boot.jsonl
+  pid 19504, 19 event(s), 0 bad line(s)
+  kinds: dllmain 4, exception 1, map 5, tls_callback 2, tls_index0 1, trace_open 1, xmem_attributes 5
+  modules (5): XboxBvhBuilder.dll, amd_fidelityfx_loader_xbox.dll, libHttpClient.GDK.dll, Bink2Scarlett.dll, game_scarlett_master.exe
+  tls callbacks: 2
+    last observed TLS callback: game_scarlett_master.exe+0x55e2ebc (process attach)
+  dllmain: 4 ok, 0 failed
+  unimplemented: none
+  exceptions: 1
+    code 0x80000003 at game_scarlett_master.exe+0x5a91c21
+      stack: game_scarlett_master.exe+0x5a91c21, game_scarlett_master.exe+0x56a1e5a, host:gta6rt.exe+0x14767b, host:KERNEL32.DLL+0x17374, host:ntdll.dll+0x4cc91
