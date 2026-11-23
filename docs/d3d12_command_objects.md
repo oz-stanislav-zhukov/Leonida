@@ -830,7 +830,7 @@ command object.
 | Item | Why it is blocked |
 |---|---|
 | `PresentX` | No slot, signature, plane struct or swapchain/plane parameters. Prior art gives only names, the 2-plane/8-view limits and four flag names. |
-| `CreateCommandQueueX` | No slot or parameter layout; only the UMD message and an inferred shape. |
+| `CreateCommandQueueX` | No slot or parameter layout; only the UMD message and an inferred shape. The retail title calls device slot 48 as (desc, riid, out) with a 32-byte desc (#6954), which differs from the (pDesc, pShaderQueueParams, riid, out) shape inferred above. |
 | `SuspendX` / `ResumeX` | No slot or signature. |
 | Xbox queue/list/fence/allocator slot deviations | No runtime binary and no game executable; the package has no queue, fence or allocator client, and its only command-list client is the BVH builder. |
 | Builder's list field `+0x350` | Read once (`0x1d877`) and not explained by the inline buffer of section 3.5a, which covers `+0x18`, `+0x28`, `+0x30`, `+0x140`, `+0x141`, `+0x344` and `+0x544`. |
