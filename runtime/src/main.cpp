@@ -30,6 +30,7 @@
 #include "base_reservation.h"
 #include "code_hooks.h"
 #include "host_cpu.h"
+#include "cpu_emulation.h"
 #include "mods.h"
 #include "pe_loader.h"
 #include "../shims/d3d12_trace.h"
@@ -172,6 +173,15 @@ int wmain(int argc, wchar_t** argv) {
                                                    : "error: cannot create the trace file\n");
         return 2;
     }
+    // The console's Zen 2 instructions this CPU may lack (docs/cpu_features.md): emulated on #UD. Installed after the
+    // trace's handler so it runs first, and an emulated instruction is not recorded as an exception.
+    if (const auto host = rt::cpu_emulation::detect_host(); !host.sse4a || !host.clzero || !host.monitorx || !host.clwb)
+        std::fprintf(stderr, "[rt] cpu: this CPU lacks%s%s%s%s; the game's uses are emulated (docs/cpu_features.md)\n",
+                     host.sse4a ? "" : " SSE4a", host.clzero ? "" : " CLZERO", host.monitorx ? "" : " MONITORX",
+                     host.clwb ? "" : " CLWB");
+    if (!rt::cpu_emulation::install())
+        std::fprintf(stderr, "[rt] cpu: AddVectoredExceptionHandler failed (error %lu); instructions this CPU lacks "
+                             "will stop the game\n", GetLastError());
 
     try {
         rt::Loader loader(game_dir);

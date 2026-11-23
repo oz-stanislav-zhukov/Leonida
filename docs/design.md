@@ -73,6 +73,9 @@ This writes `reports/exe/` (JSON plus a readable summary). Check it in this orde
    `VERIFY` note of the runtime and the docs, with file and line. Notes in a shim whose class the exe calls are
    marked **called** and come first: those are the ones its first boot reaches, such as the `XStoreGameLicense`
    sizes.
+7. **CPU instructions.** `python -I tools/cpu_feature_scan.py <exe>` lists the instructions a desktop CPU may lack
+   (AMD-only, newer-Intel-only, privileged), with counts split by `.pdata` range. The retail executable has a few
+   AMD-only and CLWB sites that raise `#UD` on Intel hosts ([cpu_features.md](cpu_features.md)).
 
 Then `runtime\build\gta6rt.exe --dry-run <exe>` maps the image and binds every import to the shim table without
 running any game code. It reports what it couldn't bind.
