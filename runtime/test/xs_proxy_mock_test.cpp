@@ -386,6 +386,9 @@ int check_levels() {
             EXPECT(r75 == E_NOTIMPL && !queue1 && mock->calls[75] == 0);
         }
 
+        // 133: past every PC device vtable; the retail title calls it. Refused, not a jump through a missing entry.
+        EXPECT(hr_of(raw(device, 133)) == E_NOTIMPL && mock->calls[127] == 0);
+
         Mock* const queue_mock = reinterpret_cast<Mock*>(real_queue);
         Mock* const fence_mock = reinterpret_cast<Mock*>(real_fence);
         EXPECT(release(queue) == 0 && release(fence) == 0);
