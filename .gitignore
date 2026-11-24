@@ -22,6 +22,10 @@ carve/
 *.ogg
 *.wav
 
+# ---- local tooling state ----
+.unslop/
+NOTES.md
+
 # ---- build output and caches ----
 build/
 build-*/
