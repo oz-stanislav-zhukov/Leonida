@@ -1032,6 +1032,7 @@ struct ListProxy {
     alignas(8) std::uint8_t console_fields[0x600];
     std::atomic<unsigned long> refs;    // past the console body
     unsigned pc_slot_count;             // slots the real list implements; mapped slots past it are refused
+    IID console_riid;                   // the console list IID this proxy was created for (zero when none); QI serves it
 
     void pin_cursor_at_limit() {
         const std::uint64_t at_limit = static_cast<std::uint64_t>(
@@ -1141,6 +1142,13 @@ inline HRESULT list_query_interface(ListProxy* self, const IID* riid, void** out
     if (!out) return E_POINTER;
     *out = nullptr;
     if (!riid) return E_POINTER;
+    // The console list IIDs are not runtime exports (docs/d3d12_xs_surface.md §4): a proxy created for one serves
+    // it as its own interface, on top of the PC chain.
+    if (!is_list_iid(*riid) && IsEqualIID(*riid, self->console_riid)) {
+        *out = self;
+        list_add_ref(self);
+        return S_OK;
+    }
     if (!is_list_iid(*riid)) {
         if (supports_iid(self->real, *riid)) log_refused_iid("list", *riid);
         return E_NOINTERFACE;
@@ -1259,6 +1267,7 @@ HRESULT wrap_list(IUnknown* created, DeviceProxy* device, const IID* riid, void*
     proxy->device = device;
     proxy->refs.store(1, std::memory_order_relaxed);
     proxy->pc_slot_count = detect_list_slot_count(created);
+    proxy->console_riid = is_list_iid(*riid) ? IID_NULL : *riid;
     proxy->pin_cursor_at_limit();
     proxy_add_ref(device);
 
@@ -1583,9 +1592,28 @@ HRESULT proxy_create_command_list_x(DeviceProxy* self, std::uint64_t desc_word, 
     auto* allocator = allocator_proxy_real_allocator(reinterpret_cast<void*>(allocator_word));
     if (!allocator) allocator = reinterpret_cast<ID3D12CommandAllocator*>(allocator_word);
     auto* initial_state = reinterpret_cast<ID3D12PipelineState*>(initial_state_word);
+    // The riid is a console command-list IID that is not in the PC SDK (docs/retail_boot_chain.md stop 9):
+    // the PC device cannot create an object of it, so an unknown riid asks for the PC interface of the same type.
+    // The compute/copy IIDs are literals: the generated d3d12 stubs declare no ID3D12Compute/CopyCommandList type.
+    static const IID kPcComputeListIid = {0xb216e85d, 0x8188, 0x4562,
+                                          {0x84, 0x75, 0x02, 0xba, 0xdb, 0x65, 0x39, 0x13}};  // ID3D12ComputeCommandList
+    static const IID kPcCopyListIid = {0x460fab9f, 0x4a0f, 0x4feb,
+                                       {0x85, 0x12, 0x57, 0xd6, 0x6f, 0xa1, 0x93, 0x8e}};      // ID3D12CopyCommandList
+    const IID& pc_iid = is_list_iid(*riid) ? *riid
+                           : (type == D3D12_COMMAND_LIST_TYPE_COMPUTE ? kPcComputeListIid
+                               : type == D3D12_COMMAND_LIST_TYPE_COPY ? kPcCopyListIid
+                                                                      : __uuidof(ID3D12GraphicsCommandList));
+    static std::atomic<bool> iid_logged{false};
+    if (!is_list_iid(*riid) && first_call(iid_logged))
+        std::fprintf(stderr, "[rt] d3d12_xs: slot 73 console list IID {" _X8 "-" _X4 "-" _X4 "-%02x%02x-%02x%02x%02x%02x%02x%02x} "
+                             "-> asking the PC device for the %s interface\n",
+                     riid->Data1, riid->Data2, riid->Data3, riid->Data4[0], riid->Data4[1], riid->Data4[2],
+                     riid->Data4[3], riid->Data4[4], riid->Data4[5], riid->Data4[6], riid->Data4[7],
+                     type == D3D12_COMMAND_LIST_TYPE_COMPUTE ? "compute"
+                     : type == D3D12_COMMAND_LIST_TYPE_COPY ? "copy" : "graphics");
+
     void* created = nullptr;
-    const HRESULT hr = self->real->CreateCommandList(0, type, allocator, initial_state,
-                                                     *riid, &created);
+    const HRESULT hr = self->real->CreateCommandList(0, type, allocator, initial_state, pc_iid, &created);
     if (FAILED(hr)) return hr;
     return wrap_list(static_cast<IUnknown*>(created), self, riid, out);
 }
