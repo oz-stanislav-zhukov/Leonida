@@ -175,15 +175,32 @@ private:
     const void* recording_ = nullptr;
 };
 
-class GraphicsCommandList final
-    : public Child<GraphicsCommandList, ID3D12GraphicsCommandList8Stubs, ID3D12Object, ID3D12DeviceChild,
-                    ID3D12CommandList, ID3D12GraphicsCommandList, ID3D12GraphicsCommandList1,
-                    ID3D12GraphicsCommandList2, ID3D12GraphicsCommandList3, ID3D12GraphicsCommandList4,
-                    ID3D12GraphicsCommandList5, ID3D12GraphicsCommandList6, ID3D12GraphicsCommandList7,
-                    ID3D12GraphicsCommandList8> {
+template<class T>
+using GclBase = Child<T, ID3D12GraphicsCommandList8Stubs, ID3D12Object, ID3D12DeviceChild,
+                       ID3D12CommandList, ID3D12GraphicsCommandList, ID3D12GraphicsCommandList1,
+                       ID3D12GraphicsCommandList2, ID3D12GraphicsCommandList3, ID3D12GraphicsCommandList4,
+                       ID3D12GraphicsCommandList5, ID3D12GraphicsCommandList6, ID3D12GraphicsCommandList7,
+                       ID3D12GraphicsCommandList8>;
+
+class GraphicsCommandList final : public GclBase<GraphicsCommandList> {
 public:
     // {2f8a7c33-91d4-4b6e-8e05-6d3f1a9b2c47}
     static constexpr GUID kTag{0x2f8a7c33, 0x91d4, 0x4b6e, {0x8e, 0x05, 0x6d, 0x3f, 0x1a, 0x9b, 0x2c, 0x47}};
+    // The PC compute/copy list IIDs (d3d12.h): both interfaces extend ID3D12GraphicsCommandList with no methods,
+    // so one object answers them under the same pointer. The generated stubs declare no such types, hence literals.
+    static constexpr GUID kComputeListIid{0xb216e85d, 0x8188, 0x4562, {0x84, 0x75, 0x02, 0xba, 0xdb, 0x65, 0x39, 0x13}};
+    static constexpr GUID kCopyListIid{0x460fab9f, 0x4a0f, 0x4feb, {0x85, 0x12, 0x57, 0xd6, 0x6f, 0xa1, 0x93, 0x8e}};
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override {
+        if ((riid == kComputeListIid && type_ == D3D12_COMMAND_LIST_TYPE_COMPUTE) ||
+            (riid == kCopyListIid && type_ == D3D12_COMMAND_LIST_TYPE_COPY)) {
+            if (!out) return E_POINTER;
+            *out = static_cast<IUnknown*>(this);
+            AddRef();
+            return S_OK;
+        }
+        return GclBase<GraphicsCommandList>::QueryInterface(riid, out);
+    }
     explicit GraphicsCommandList(D3D12_COMMAND_LIST_TYPE type) : type_(type) {}
     ~GraphicsCommandList() override {
         stop_recording();
