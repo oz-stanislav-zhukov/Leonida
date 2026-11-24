@@ -1605,9 +1605,9 @@ HRESULT proxy_create_command_list_x(DeviceProxy* self, std::uint64_t desc_word, 
                                                                       : __uuidof(ID3D12GraphicsCommandList));
     static std::atomic<bool> iid_logged{false};
     if (!is_list_iid(*riid) && first_call(iid_logged))
-        std::fprintf(stderr, "[rt] d3d12_xs: slot 73 console list IID {" _X8 "-" _X4 "-" _X4 "-%02x%02x-%02x%02x%02x%02x%02x%02x} "
+        std::fprintf(stderr, "[rt] d3d12_xs: slot 73 console list IID {%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x} "
                              "-> asking the PC device for the %s interface\n",
-                     riid->Data1, riid->Data2, riid->Data3, riid->Data4[0], riid->Data4[1], riid->Data4[2],
+                     static_cast<unsigned>(riid->Data1), riid->Data2, riid->Data3, riid->Data4[0], riid->Data4[1], riid->Data4[2],
                      riid->Data4[3], riid->Data4[4], riid->Data4[5], riid->Data4[6], riid->Data4[7],
                      type == D3D12_COMMAND_LIST_TYPE_COMPUTE ? "compute"
                      : type == D3D12_COMMAND_LIST_TYPE_COPY ? "copy" : "graphics");
